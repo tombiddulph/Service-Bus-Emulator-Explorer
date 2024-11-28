@@ -1,0 +1,42 @@
+﻿@using Microsoft.Extensions.Options
+<MudNavMenu>
+    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Emulator Overview</MudNavLink>
+    <MudNavGroup Title="Entities" Expanded="true">
+        <MudNavGroup Title="Queues" Expanded="true">
+            @foreach (var queue in _queues)
+            {
+                <MudNavLink Href="@($"{EmulatorNamespace}/{queue}")" Icon="@Icons.Material.Filled.Queue">@queue</MudNavLink>
+            }
+        </MudNavGroup>
+        <MudNavGroup Title="Topics" Expanded="true">
+            @foreach (var topic in _topics)
+            {
+                <MudNavLink Href="@($"topic/{topic}")" Icon="@Icons.Material.Filled.Topic">@topic</MudNavLink>
+            }
+        </MudNavGroup>
+    </MudNavGroup>
+</MudNavMenu>
+
+
+@code
+
+
+
+{
+    [Inject] private IOptions<EmulatorConfig> EmulatorConfig { get; set; } = null!;
+
+    private List<string> _queues = [];
+    private List<string> _topics = [];
+    private string EmulatorNamespace { get; set; } = string.Empty;
+
+    protected override void OnInitialized()
+    {
+
+        var emulatorNamespace = EmulatorConfig.Value.UserConfig.Namespaces.Single();
+        EmulatorNamespace = emulatorNamespace.Name;
+        _queues.AddRange(emulatorNamespace.Queues.Select(q => q.Name));
+        _topics.AddRange(emulatorNamespace.Topics.Select(t => t.Name));
+        base.OnInitialized();
+    }
+
+}

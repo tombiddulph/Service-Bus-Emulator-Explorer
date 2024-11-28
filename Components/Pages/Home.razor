@@ -1,0 +1,80 @@
+﻿@page "/"
+@using SbExplorer.Mud.Services
+
+<MudGrid>
+    <MudItem xs="12">
+        <MudContainer>
+            <MudText Typo="Typo.h6">Queues</MudText>
+            <MudDataGrid Items="Queues" RowClick="@((DataGridRowClickEventArgs<EmulatorQueue> args) => NavigationManager.NavigateTo($"{args.Item.Namespace}/{args.Item.Name}"))" Hover>
+                <Columns>
+                    <PropertyColumn Property="x => x.Name"/>
+                    <PropertyColumn Property="x => x.ActiveMessageCount" Title="Active Messages"/>
+                    <PropertyColumn Property="x => x.DeadLetterCount" Title="Dead Letter Messages"/>
+                </Columns>
+            </MudDataGrid>
+        </MudContainer>
+    </MudItem>
+    <MudItem xs="12">
+        <MudContainer>
+            <MudText Typo="Typo.h6">Topics</MudText>
+            <MudDataGrid Items="Topics">
+                <Columns>
+                    <PropertyColumn Property="x => x.Name"/>
+                    <PropertyColumn Property="x => x.ActiveMessageCount" Title="Active Messages"/>
+                    <PropertyColumn Property="x => x.DeadLetterCount" Title="Dead Letter Messages"/>
+                </Columns>
+            </MudDataGrid>
+        </MudContainer>
+    </MudItem>
+    <MudItem xs="12">
+        <MudContainer>
+            <MudText Typo="Typo.h6">Subscriptions</MudText>
+            <MudDataGrid Items="Subscriptions">
+                <Columns>
+                    <PropertyColumn Property="x => x.Name"/>
+                    <PropertyColumn Property="x => x.TopicName" Title="Topic Name"/>
+                </Columns>
+            </MudDataGrid>
+        </MudContainer>
+    </MudItem>
+</MudGrid>
+
+@code {
+
+    [Inject] private NavigationManager NavigationManager { get; set; } = null!;
+    [Inject] private ServiceBusAdmin ServiceBusAdmin { get; set; } = null!;
+    [Inject] private ISnackbar Snackbar { get; set; } = null!;
+    [Inject] private ILogger<Home> Logger { get; set; } = null!;
+    private List<EmulatorQueue> Queues { get; set; } = [];
+    private List<EmulatorTopic> Topics { get; set; } = [];
+    private List<EmulatorSubscription> Subscriptions { get; set; } = [];
+
+    
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var queues = ServiceBusAdmin.GetQueues();
+
+            await foreach (var queue in queues)
+            {
+                Queues.Add(queue);
+            }
+
+            var topics = ServiceBusAdmin.GetTopics();
+
+            await foreach (var topic in topics)
+            {
+                Topics.Add(topic);
+            }
+
+            Subscriptions.AddRange(ServiceBusAdmin.GetSubscriptions());
+        }
+        catch (Exception)
+        {
+            Logger.LogError("Error loading data");
+            Snackbar.Add("Error loading data", Severity.Error);
+        }
+    }
+
+}
