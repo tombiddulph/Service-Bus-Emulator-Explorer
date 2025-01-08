@@ -1,13 +1,15 @@
 ﻿@page "/{serviceBusNameSpace}/{queueName}"
 
+@using System.Text
 @using System.Text.Json
+@using System.Text.Json.Nodes
 @using Azure.Messaging.ServiceBus
 @using Microsoft.Extensions.Caching.Distributed
 @using SbExplorer.Mud.Helpers
 @using SbExplorer.Mud.Services
 <MudText Typo="Typo.h3">@($"{ServiceBusNameSpace}/{QueueName}")</MudText>
 
-<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6" >
     <MudTabPanel Text="Active messages" Disabled="@(!Messages.Any())">
         <MudDataGrid Items="Messages" Loading="@(!Messages.Any())">
             <Columns>
@@ -26,8 +28,8 @@
                     <MudText Typo="Typo.h6">Message Body</MudText>
                     <MudDivider/>
                     <pre>
-    @(JsonSerializer.Serialize(@context.Item.Body, new JsonSerializerOptions() { WriteIndented = true }))
-</pre>
+                        @context.Item.Body
+                    </pre>
                 </MudCard>
                 <MudCard>
                     <MudTable Items="context.Item.Properties">
@@ -86,7 +88,63 @@
         </MudDataGrid>
     </MudTabPanel>
     <MudTabPanel Text="Send message">
-        <MudText Typo="Typo.h3">Not yet implemented</MudText>
+        @* <MudExStructuredDataEditor @bind-Data="@MessageText" DataType="StructuredDataType.Json" ></MudExStructuredDataEditor> *@
+        <StandaloneCodeEditor @ref="Editor"
+                              Id="message-body-editor"
+                              CssClass="message-body-editor"
+                              ConstructionOptions="EditorConstructionOptions"/>
+        <MudForm>
+            <MudPaper Class="pa-4">
+                <MudStack Spacing="2">
+                    <MudButton OnClick="OnBrokerPropertiesCollapseClick">Broker Properties</MudButton>
+                    <MudDivider/>
+                    <MudCollapse Expanded="_brokerPropertiesExpanded">
+                        <EditForm Model="@BrokerPropertiesModel">
+                            <DataAnnotationsValidator/>
+                            <MudItem xs="12" sm="7">
+                                <MudCard>
+                                    <MudCardContent>
+                                        <MudTextField Label="Correlation ID"
+                                                      @bind-Value="BrokerPropertiesModel.CorrelationId"
+                                                      For="@(() => BrokerPropertiesModel.CorrelationId)"/>
+                                        <MudTextField Label="Message ID" Class="mt-3"
+                                                      @bind-Value="BrokerPropertiesModel.MessageId"
+                                                      For="@(() => BrokerPropertiesModel.MessageId)"/>
+                                        <MudTextField Label="Reply To" Class="mt-3"
+                                                      @bind-Value="BrokerPropertiesModel.ReplyTo"
+                                                      For="@(() => BrokerPropertiesModel.ReplyTo)"/>
+                                        <MudTextField Label="Label/Subject" Class="mt-3"
+                                                      @bind-Value="BrokerPropertiesModel.LabelSubject"
+                                                      For="@(() => BrokerPropertiesModel.LabelSubject)"/>
+                                    </MudCardContent>
+                                </MudCard>
+                            </MudItem>
+
+                        </EditForm>
+                    </MudCollapse>
+                    <MudButton OnClick="OnCustomPropertiesCollapseClick">Custom Properties</MudButton>
+                    <MudDivider/>
+                    <MudCollapse Expanded="_customPropertiesExpanded">
+
+                        @if (CustomProperties.Any())
+                        {
+                            <MudStack>
+                                @foreach (var kvp in CustomProperties)
+                                {
+                                    <MudPaper Class="pa-3">@kvp.Key: @kvp.Value</MudPaper>
+                                }
+
+                            </MudStack>
+                        }
+                        <MudTextField @bind-Value="NewKey" Label="Key"/>
+                        <MudTextField @bind-Value="NewValue" Label="Value"/>
+                        <MudButton OnClick="AddTableRow">Add</MudButton>
+                    </MudCollapse>
+                </MudStack>
+            </MudPaper>
+            <MudButton OnClick="Validate">Validate</MudButton>
+            <MudButton OnClick="SendMessage" Disabled="@(!IsValidJson)">Send</MudButton>
+        </MudForm>
     </MudTabPanel>
 </MudTabs>
 
@@ -95,14 +153,38 @@
     [Parameter] public string ServiceBusNameSpace { get; set; } = string.Empty;
     [Inject] ServiceBusClient Client { get; set; } = null!;
     [Inject] private IDistributedCache Cache { get; set; } = null!;
+    private string MessageText { get; set; } = null!;
     private List<ServiceBusMessageViewModel> Messages { get; set; } = [];
     private List<ServiceBusMessageViewModel> DeadLetterMessages { get; set; } = [];
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(5));
+    private StandaloneCodeEditor Editor { get; set; } = null!;
+    private bool IsValidJson { get; set; }
+    private BrokerProperties BrokerPropertiesModel { get; set; } = new();
+    private Dictionary<string, object> CustomProperties { get; set; } = new();
+    private string NewKey { get; set; }
+    private string NewValue { get; set; }
+    private bool _brokerPropertiesExpanded;
+    private bool _customPropertiesExpanded;
+
+
+    private StandaloneEditorConstructionOptions EditorConstructionOptions(StandaloneCodeEditor editor)
+    {
+        return new StandaloneEditorConstructionOptions
+        {
+            AutomaticLayout = true,
+            Language = "json",
+            Value = MessageText
+        };
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadMessages();
+    }
 
     protected override async Task OnInitializedAsync()
     {
         await LoadMessages();
-
 
         if (DeadLetterMessages.Count is 0 || Messages.Count is 0)
         {
@@ -131,13 +213,122 @@
         if (await Cache.GetAsync(CacheKeyHelper.QueueKey(ServiceBusNameSpace, QueueName)) is { } activeMessageBytes)
         {
             var messages = JsonSerializer.Deserialize<List<ServiceBusMessageViewModel>>(activeMessageBytes);
+            Messages.Clear();
             Messages.AddRange(messages ?? []);
         }
 
         if (await Cache.GetAsync(CacheKeyHelper.DeadLetterQueueKey(ServiceBusNameSpace, QueueName)) is { } deadLetterMessageBytes)
         {
             var messages = JsonSerializer.Deserialize<List<ServiceBusMessageViewModel>>(deadLetterMessageBytes);
+            DeadLetterMessages.Clear();
             DeadLetterMessages.AddRange(messages ?? []);
         }
     }
+
+    private async Task SendMessage(MouseEventArgs obj)
+    {
+        var sender = Client.CreateSender(QueueName);
+        var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(MessageText));
+
+        if (BrokerPropertiesModel.LabelSubject is not null)
+        {
+            message.Subject = BrokerPropertiesModel.LabelSubject;
+        }
+
+        if (BrokerPropertiesModel.CorrelationId is not null)
+        {
+            message.CorrelationId = BrokerPropertiesModel.CorrelationId;
+        }
+
+        if (BrokerPropertiesModel.MessageId is not null)
+        {
+            message.MessageId = BrokerPropertiesModel.MessageId;
+        }
+
+        if (BrokerPropertiesModel.ReplyTo is not null)
+        {
+            message.ReplyTo = BrokerPropertiesModel.ReplyTo;
+        }
+
+
+        foreach (var customProperty in CustomProperties)
+        {
+            message.ApplicationProperties.TryAdd(customProperty.Key, customProperty.Value);
+        }
+
+
+        await sender.SendMessageAsync(message);
+        BrokerPropertiesModel.Clear();
+        CustomProperties.Clear();
+        MessageText = "{}";
+        IsValidJson = false;
+        await Editor.SetValue(MessageText);
+        _brokerPropertiesExpanded = false;
+        _customPropertiesExpanded = false;
+
+        Console.WriteLine("Message sent");
+    }
+
+    private async Task Validate()
+    {
+        var text = await Editor.GetValue();
+        try
+        {
+            var json = JsonNode.Parse(text);
+            if (json != null)
+            {
+                IsValidJson = true;
+                MessageText = json.ToJsonString();
+            }
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+        }
+    }
+
+    private void OnBrokerPropertiesCollapseClick() => _brokerPropertiesExpanded = !_brokerPropertiesExpanded;
+    private void OnCustomPropertiesCollapseClick() => _customPropertiesExpanded = !_customPropertiesExpanded;
+
+
+    public class BrokerProperties
+    {
+        public string? CorrelationId { get; set; }
+        public string? MessageId { get; set; }
+        public string? ReplyTo { get; set; }
+        public string? LabelSubject { get; set; }
+
+        public void Clear()
+        {
+            CorrelationId = null;
+            MessageId = null;
+            ReplyTo = null;
+            LabelSubject = null;
+        }
+    }
+
+    private void AddTableRow()
+    {
+        if (!string.IsNullOrEmpty(NewKey) && !string.IsNullOrEmpty(NewValue))
+        {
+            CustomProperties[NewKey] = NewValue;
+            NewKey = string.Empty;
+            NewValue = string.Empty;
+        }
+    }
+
 }
+
+<style>
+    #message-body-editor { /* applies to a specific editor instance */
+        height: 500px;
+    }
+
+    .my-editor-class { /* applies to all editor instances with this class */
+        height: 100px;
+    }
+
+    .monaco-editor-container { /* applies to all editor instances */
+        height: 100px;
+    }
+</style>

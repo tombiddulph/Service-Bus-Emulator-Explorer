@@ -58,7 +58,9 @@ builder.Services.AddMudExtensions();
 builder.Services.AddAzureClients(opts =>
 {
     opts.AddClient<ServiceBusClient, ServiceBusClientOptions>((options, _, _) =>
-        new CachingServiceBusClient(serviceBusConfig.ConnectionString, options));
+    {
+        return new CachingServiceBusClient(serviceBusConfig.ConnectionString, options);
+    });
 });
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -75,7 +77,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
+app.Use(MudExWebApp.MudExMiddleware);
 app.UseStaticFiles();
 app.UseAntiforgery();
 

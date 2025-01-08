@@ -2,7 +2,7 @@
   "UserConfig": {
     "Namespaces": [
       {
-        "Name": "sbemulatorns",
+        "Name": "serivcebus-emulator",
         "Queues": [
           {
             "Name": "queue.1",

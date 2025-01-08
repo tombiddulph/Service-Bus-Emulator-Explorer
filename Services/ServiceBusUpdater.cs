@@ -17,18 +17,18 @@ public class ServiceBusUpdater(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        try
+        while (!stoppingToken.IsCancellationRequested)
         {
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
                 logger.LogInformation("Updating queues and topics");
                 await Task.WhenAll(UpdateQueues(), UpdateTopics());
                 await Task.Delay(TimeSpan.FromMilliseconds(serviceBusConfig.Value.RefreshIntervalMs), stoppingToken);
             }
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "Error updating queues and topics");
+            catch (Exception e)
+            {
+                logger.LogError(e, "Error updating queues and topics");
+            }
         }
     }
 
@@ -63,7 +63,8 @@ public class ServiceBusUpdater(
             foreach (var queue in emulatorNamespace.Queues)
             {
                 var receiver = client.CreateReceiver(queue.Name,
-                    new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.None });
+                    new ServiceBusReceiverOptions
+                    { ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.None });
                 var deadLetterReceiver = client.CreateReceiver(queue.Name,
                     new ServiceBusReceiverOptions
                     { ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.DeadLetter });
@@ -81,8 +82,8 @@ public class ServiceBusUpdater(
                     deadLetterMessages.Count);
                 result.Add(emulatorQueue);
             }
-
         }
+
         await cache.SetAsync(CacheKeyHelper.Queues, JsonSerializer.SerializeToUtf8Bytes(result));
     }
 

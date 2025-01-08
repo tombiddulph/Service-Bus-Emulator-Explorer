@@ -7,10 +7,9 @@ This is a Blazor UI for the [service bus emulator](https://github.com/Azure/azur
 ## Features
 
 - [x] View active & deadlettered messages
+- [x] Send messages to a queue (including Broker Properties & Custom Properties)
 
 ## Roadmap
-
-- [ ] Send messages
 - [ ] View subscriptions
 - [ ] View topics
 
@@ -25,9 +24,15 @@ The UI can be run locally or in a container.
 The .NET 9.0 SDK is required to build and run the ui.
 
 1. Clone the repository
-2. run `docker compose -f compose-services.yaml up -d`
-3. run `dotnet run`
-4. Navigate to `https://localhost:5261`
+2. Create a `.env` file in the repository root with the following content:
+    ```
+    ACCEPT_EULA=Y
+    SQL_PASSWORD=your_password
+    CONFIG_PATH=./service-bus-config.json
+    ```
+3. run `docker compose -f compose-services.yaml up -d`
+4. run `dotnet run`
+5. Navigate to `https://localhost:5261`
 
 ### Running in a container
 
@@ -36,8 +41,14 @@ The .NET 9.0 SDK is required to build and run the ui.
 Ensure you've [configured the https certificate](https://learn.microsoft.com/en-us/aspnet/core/security/docker-compose-https?view=aspnetcore-9.0) for the ui. This may require editing the `docker-compose.yaml` file to point to the correct certificate.
 
 1. Clone the repository
-2. run `docker compose up -d`
-3. Navigate to `https://localhost`
+2. Create a `.env` file in the repository root  with the following content:
+    ```
+    ACCEPT_EULA=Y
+    SQL_PASSWORD=your_password
+    CONFIG_PATH=./service-bus-config.json
+    ```
+3. run `docker compose up -d`
+4. Navigate to `https://localhost`
 
 ## Notes
 
