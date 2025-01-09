@@ -9,7 +9,7 @@
 @using SbExplorer.Mud.Services
 <MudText Typo="Typo.h3">@($"{ServiceBusNameSpace}/{QueueName}")</MudText>
 
-<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6" >
+<MudTabs @ref="Tabs" Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6" >
     <MudTabPanel Text="Active messages" Disabled="@(!Messages.Any())">
         <MudDataGrid Items="Messages" Loading="@(!Messages.Any())">
             <Columns>
@@ -158,6 +158,7 @@
     private List<ServiceBusMessageViewModel> DeadLetterMessages { get; set; } = [];
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(5));
     private StandaloneCodeEditor Editor { get; set; } = null!;
+    private MudTabs Tabs { get; set; } = null!;
     private bool IsValidJson { get; set; }
     private BrokerProperties BrokerPropertiesModel { get; set; } = new();
     private Dictionary<string, object> CustomProperties { get; set; } = new();
@@ -180,6 +181,11 @@
     protected override async Task OnParametersSetAsync()
     {
         await LoadMessages();
+
+        if(Messages.Count is 0 && DeadLetterMessages.Count is 0)
+        {
+            Tabs.ActivatePanel(2);
+        }
     }
 
     protected override async Task OnInitializedAsync()
@@ -188,6 +194,10 @@
 
         if (DeadLetterMessages.Count is 0 || Messages.Count is 0)
         {
+            if(Messages.Count is 0 && DeadLetterMessages.Count is 0)
+            {
+                Tabs.ActivatePanel(2);
+            }
             _ = RunTimer();
         }
 

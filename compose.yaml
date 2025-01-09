@@ -5,14 +5,14 @@
       context: .
       dockerfile: Dockerfile
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:8080"
+      - "8081:8081"
     environment:
         - "ServiceBus__ConnectionString=Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
         - "ServiceBus_RefreshIntervalMs=5000"
         - "Redis__ConnectionString=redis:6379,abortConnect=false,ssl=false,password=pass@w0rd1"
         - "ASPNETCORE_ENVIRONMENT=Production"
-        - "ASPNETCORE_URLS=https://+:443;http://+:80"
+        - "ASPNETCORE_URLS=https://+:8081;http://+:8080"
         - "ASPNETCORE_Kestrel__Certificates__Default__Password=password"
         - "ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx"
     volumes:
