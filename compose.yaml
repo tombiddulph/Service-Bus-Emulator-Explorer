@@ -1,6 +1,6 @@
 ﻿services:
   sbexplorer.mud:
-    image: sbexplorer.mud
+    image: ghcr.io/tombiddulph/service-bus-emulator-explorer:main
     build:
       context: .
       dockerfile: Dockerfile
