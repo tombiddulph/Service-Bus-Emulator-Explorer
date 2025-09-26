@@ -17,6 +17,7 @@
         - "ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx"
     volumes:
       - ~/.aspnet/https:/https:ro
+      - "${CONFIG_PATH}:/app/service-bus-config.json"
     networks:
         sb-emulator:
             aliases:
