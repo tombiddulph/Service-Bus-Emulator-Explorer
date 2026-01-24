@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="compose.yaml" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ServiceBusEmulatorExplorer/ServiceBusEmulatorExplorer.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj" />
+  </Folder>
+</Solution>

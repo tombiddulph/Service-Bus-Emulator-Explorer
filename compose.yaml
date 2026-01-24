@@ -1,35 +1,29 @@
 ﻿services:
-  sbexplorer.mud:
-    image: ghcr.io/tombiddulph/service-bus-emulator-explorer:main
-    build:
-      context: .
-      dockerfile: Dockerfile
+  sb-explorer:
+    image: ghcr.io/tombiddulph/sbuitest:latest
+#    build:
+#      context: .
+#      dockerfile: src/ServiceBusEmulatorExplorer/Dockerfile
     ports:
       - "8080:8080"
       - "8081:8081"
     environment:
-        - "ServiceBus__ConnectionString=Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
-        - "ServiceBus_RefreshIntervalMs=5000"
-        - "Redis__ConnectionString=redis:6379,abortConnect=false,ssl=false,password=pass@w0rd1"
-        - "ASPNETCORE_ENVIRONMENT=Production"
-        - "ASPNETCORE_URLS=https://+:8081;http://+:8080"
-        - "ASPNETCORE_Kestrel__Certificates__Default__Password=password"
-        - "ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx"
-    volumes:
-      - ~/.aspnet/https:/https:ro
-      - "${CONFIG_PATH}:/app/service-bus-config.json"
+      - "ServiceBus__ConnectionString=Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+      - "ServiceBus__AdministrationConnectionString=Endpoint=sb://servicebus-emulator:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+      - "ServiceBus_RefreshIntervalMs=5000"
+      - "ASPNETCORE_ENVIRONMENT=Production"
     networks:
-        sb-emulator:
-            aliases:
-                - "sbexplorer.mud"
+      sb-emulator:
+        aliases:
+          - "sb-explorer"
   servicebus-emulator:
     container_name: "servicebus-emulator"
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     pull_policy: always
-    volumes:
-      - "${CONFIG_PATH}:/ServiceBus_Emulator/ConfigFiles/Config.json"
+  
     ports:
       - "5672:5672"
+      - "5300:5300"
     environment:
       SQL_SERVER: sql
       MSSQL_SA_PASSWORD: "${SQL_PASSWORD}"  # Password should be same as what is set for SQL
@@ -50,17 +44,6 @@
     environment:
       ACCEPT_EULA: ${ACCEPT_EULA}
       MSSQL_SA_PASSWORD: "${SQL_PASSWORD}"
-  redis:
-    image: redis:8.0-M02-alpine
-    restart: always
-    ports:
-      - '6379:6379'
-    command: redis-server --save 60 1 --loglevel warning --requirepass pass@w0rd1
-    volumes:
-      - ./data:/data
-    networks:
-      sb-emulator:
-        aliases:
-          - "redis"
 networks:
   sb-emulator:
+
