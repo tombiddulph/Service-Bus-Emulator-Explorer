@@ -1,9 +1,6 @@
 ﻿services:
   sb-explorer:
-    image: ghcr.io/tombiddulph/sbuitest:latest
-#    build:
-#      context: .
-#      dockerfile: src/ServiceBusEmulatorExplorer/Dockerfile
+    image: ghcr.io/tombiddulph/service-bus-emulator-explorer:0.1.0
     ports:
       - "8080:8080"
       - "8081:8081"
