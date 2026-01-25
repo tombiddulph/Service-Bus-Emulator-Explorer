@@ -60,7 +60,12 @@ jobs:
         run: dotnet restore -r linux-musl-x64
 
       - name: Build .NET solution
-        run: dotnet build --no-restore --configuration Release -p:Version=${{ needs.version.outputs.semVer }}
+        run: |
+          dotnet build --no-restore --configuration Release \
+            -p:Version=${{ needs.version.outputs.majorMinorPatch }} \
+            -p:AssemblyVersion=${{ needs.version.outputs.majorMinorPatch }}.0 \
+            -p:FileVersion=${{ needs.version.outputs.majorMinorPatch }}.0 \
+            -p:InformationalVersion=${{ needs.version.outputs.semVer }}
 
       - name: Run tests
         run: dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release
@@ -94,6 +99,7 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ needs.version.outputs.semVer }}
+            ASSEMBLY_VERSION=${{ needs.version.outputs.majorMinorPatch }}.0
           tags: |
             ghcr.io/${{ github.repository }}:${{ needs.version.outputs.semVer }}
             ghcr.io/${{ github.repository }}:${{ needs.version.outputs.majorMinorPatch }}

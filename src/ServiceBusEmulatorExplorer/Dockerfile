@@ -31,8 +31,14 @@ COPY . .
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 ARG VERSION=0.0.0
+ARG ASSEMBLY_VERSION=0.0.0.0
 WORKDIR /src/src/ServiceBusEmulatorExplorer
-RUN dotnet publish "ServiceBusEmulatorExplorer.csproj" -c $BUILD_CONFIGURATION -r linux-x64 -p:Version=$VERSION -o /app/publish
+RUN dotnet publish "ServiceBusEmulatorExplorer.csproj" -c $BUILD_CONFIGURATION -r linux-x64 \
+    -p:Version=${VERSION} \
+    -p:AssemblyVersion=${ASSEMBLY_VERSION} \
+    -p:FileVersion=${ASSEMBLY_VERSION} \
+    -p:InformationalVersion=${VERSION} \
+    -o /app/publish
 
 FROM base AS final
 WORKDIR /app
