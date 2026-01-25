@@ -76,10 +76,16 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Lowercase image name
+        id: image
+        run: echo "name=${IMAGE_NAME,,}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -101,9 +107,9 @@ jobs:
             VERSION=${{ needs.version.outputs.semVer }}
             ASSEMBLY_VERSION=${{ needs.version.outputs.majorMinorPatch }}.0
           tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.version.outputs.semVer }}
-            ghcr.io/${{ github.repository }}:${{ needs.version.outputs.majorMinorPatch }}
-            ghcr.io/${{ github.repository }}:latest
+            ${{ steps.image.outputs.name }}:${{ needs.version.outputs.semVer }}
+            ${{ steps.image.outputs.name }}:${{ needs.version.outputs.majorMinorPatch }}
+            ${{ steps.image.outputs.name }}:latest
           labels: |
             org.opencontainers.image.version=${{ needs.version.outputs.semVer }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -119,5 +125,5 @@ jobs:
             ## Docker Image
             
             ```bash
-            docker pull ghcr.io/${{ github.repository }}:${{ needs.version.outputs.semVer }}
+            docker pull ${{ steps.image.outputs.name }}:${{ needs.version.outputs.semVer }}
             ```
