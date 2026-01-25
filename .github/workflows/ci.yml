@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      semVer: ${{ steps.gitversion.outputs.semVer }}
+      majorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}
+      preReleaseTag: ${{ steps.gitversion.outputs.preReleaseTag }}
+      fullSemVer: ${{ steps.gitversion.outputs.fullSemVer }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for GitVersion
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.1.1
+        with:
+          versionSpec: '5.x'
+
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.1.1
+        with:
+          useConfigFile: true
+
+      - name: Display Version
+        run: |
+          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "FullSemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: version
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/sb-explorer-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: app/sb-explorer-ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: app/sb-explorer-ui
+        run: npm run build
+
+      - name: Restore .NET dependencies
+        run: dotnet restore -r linux-musl-x64
+
+      - name: Build .NET solution
+        run: |
+          dotnet build --no-restore --configuration Release \
+            -p:Version=${{ needs.version.outputs.majorMinorPatch }} \
+            -p:AssemblyVersion=${{ needs.version.outputs.majorMinorPatch }}.0 \
+            -p:FileVersion=${{ needs.version.outputs.majorMinorPatch }}.0 \
+            -p:InformationalVersion=${{ needs.version.outputs.semVer }}
+
+      - name: Run tests
+        run: dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [version, build-and-test]
+    # Only run on main branch pushes, not on tags (release.yml handles tags)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/ServiceBusEmulatorExplorer/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ needs.version.outputs.semVer }}
+            ASSEMBLY_VERSION=${{ needs.version.outputs.majorMinorPatch }}.0
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ needs.version.outputs.semVer }}
+            ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.semVer }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -3,10 +3,9 @@ services:
     container_name: "servicebus-emulator"
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     pull_policy: always
-    volumes:
-      - "${CONFIG_PATH}:/ServiceBus_Emulator/ConfigFiles/Config.json"
     ports:
       - "5672:5672"
+      - "5300:5300"
     environment:
       SQL_SERVER: sql
       MSSQL_SA_PASSWORD: "${SQL_PASSWORD}" # Password should be same as what is set for SQL
@@ -27,17 +26,5 @@ services:
     environment:
       ACCEPT_EULA: ${ACCEPT_EULA}
       MSSQL_SA_PASSWORD: "${SQL_PASSWORD}"
-  redis:
-    image: redis:8.0-M02-alpine
-    restart: always
-    ports:
-      - "6379:6379"
-    command: redis-server --save 60 1 --loglevel warning --requirepass pass@w0rd1
-    volumes:
-      - ./data:/data
-    networks:
-      sb-emulator:
-        aliases:
-          - "redis"
 networks:
   sb-emulator:
