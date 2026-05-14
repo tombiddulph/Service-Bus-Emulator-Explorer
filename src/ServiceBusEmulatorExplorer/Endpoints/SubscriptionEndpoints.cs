@@ -45,7 +45,7 @@ public static class SubscriptionEndpoints
 
         await foreach (var item in subscriptionsRuntimeProperties)
         {
-            var subscription = await client.GetSubscriptionRuntimePropertiesAsync(topic, item.SubscriptionName)!;
+            var subscription = await client.GetSubscriptionAsync(topic, item.SubscriptionName);
 
             if (subscription is null)
             {
@@ -55,8 +55,12 @@ public static class SubscriptionEndpoints
             var subscriptionInfo = new SubscriptionInfo(
                 item.SubscriptionName,
                 EntityStatus.Active,
-                subscription.Value.ActiveMessageCount,
-                item.DeadLetterMessageCount
+                item.ActiveMessageCount,
+                item.DeadLetterMessageCount,
+                MaxDeliveryCount: subscription.Value.MaxDeliveryCount,
+                LockDuration: subscription.Value.LockDuration.ToString(),
+                DefaultTtl: subscription.Value.DefaultMessageTimeToLive.ToString(),
+                CreatedAt: item.CreatedAt.UtcDateTime
             );
 
             subscriptions.Add(subscriptionInfo);
@@ -86,7 +90,20 @@ public static class SubscriptionEndpoints
             //ignore not found
         }
 
-        await client.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, request.Name));
+        await client.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, request.Name)
+        {
+            DefaultMessageTimeToLive = request.DefaultTtl switch
+            {
+                _ when TimeSpan.TryParse(request.DefaultTtl, out var parsedTtl) => parsedTtl,
+                _ => TimeSpan.FromDays(14)
+            },
+            LockDuration = request.LockDuration switch
+            {
+                _ when TimeSpan.TryParse(request.LockDuration, out var parsedLockDuration) => parsedLockDuration,
+                _ => TimeSpan.FromMinutes(1)
+            },
+            MaxDeliveryCount = request.MaxDeliveryCount ?? 10
+        });
         return Results.Ok();
     }
 
@@ -133,9 +150,20 @@ public static class SubscriptionEndpoints
         IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
         try
         {
+            long fromSequenceNumber = 0;
+            if (skip > 0)
+            {
+                var skipped = await receiver.PeekMessagesAsync(
+                    maxMessages: skip, fromSequenceNumber: 0, cancellationToken: cancellationTokenSource.Token);
+                if (skipped.Count > 0)
+                {
+                    fromSequenceNumber = skipped[^1].SequenceNumber + 1;
+                }
+            }
+
             messages = await receiver.PeekMessagesAsync(
                 maxMessages: take,
-                fromSequenceNumber: long.MinValue + skip, cancellationToken: cancellationTokenSource.Token);
+                fromSequenceNumber: fromSequenceNumber, cancellationToken: cancellationTokenSource.Token);
         }
         catch (Exception)
         {

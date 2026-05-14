@@ -157,7 +157,7 @@ const TopicDetail = () => {
           { label: 'Max delivery count', value: showSubscriptionDetail ? sub?.maxDeliveryCount : undefined },
           { label: 'Lock duration', value: showSubscriptionDetail ? sub?.lockDuration : undefined },
           { label: 'Default TTL', value: showSubscriptionDetail ? sub?.defaultTtl : undefined },
-          { label: 'Created', value: topic.createdAt ? new Date(topic.createdAt).toLocaleString() : '—' },
+          { label: 'Created', value: showSubscriptionDetail ? (sub?.createdAt ? new Date(sub.createdAt).toLocaleString() : '—') : (topic.createdAt ? new Date(topic.createdAt).toLocaleString() : '—') },
         ]}
       />
 

@@ -30,6 +30,7 @@ export interface SubscriptionInfo {
   maxDeliveryCount?: number
   lockDuration?: string
   defaultTtl?: string
+  createdAt?: string
 }
 
 export interface MessageInfo {

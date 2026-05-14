@@ -177,8 +177,10 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
             topicName: options.TopicName,
             subscriptionName: options.SubscriptionName,
             lockDuration: options.LockDuration,
+            maxDeliveryCount: options.MaxDeliveryCount,
             defaultMessageTimeToLive: options.DefaultMessageTimeToLive,
-            autoDeleteOnIdle: TimeSpan.MaxValue);
+            autoDeleteOnIdle: TimeSpan.MaxValue,
+            userMetadata: "");
         
         _subscriptions[$"{options.TopicName}/Subscriptions/{options.SubscriptionName}"] = options;
         return Task.FromResult(Response.FromValue(subscriptionProperties, new TestResponse(201)));
@@ -201,18 +203,20 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
         CancellationToken cancellationToken = new())
     {
         var key = $"{topicName}/Subscriptions/{subscriptionName}";
-        if (_subscriptions.GetValueOrDefault(key) is null)
+        var options = _subscriptions.GetValueOrDefault(key);
+        if (options is null)
         {
-            return Task.FromResult(
-                Response.FromValue<SubscriptionProperties>(null!, new TestResponse(404)));
+            throw new ServiceBusException($"Subscription '{subscriptionName}' not found on topic '{topicName}'.", ServiceBusFailureReason.MessagingEntityNotFound);
         }
         
         var subscriptionProperties = ServiceBusModelFactory.SubscriptionProperties(
             topicName: topicName,
             subscriptionName: subscriptionName,
-            lockDuration: TimeSpan.FromMinutes(1),
-            defaultMessageTimeToLive: TimeSpan.FromDays(14),
-            autoDeleteOnIdle: TimeSpan.MaxValue);
+            lockDuration: options.LockDuration,
+            defaultMessageTimeToLive: options.DefaultMessageTimeToLive,
+            maxDeliveryCount: options.MaxDeliveryCount,
+            autoDeleteOnIdle: TimeSpan.MaxValue,
+            userMetadata: "");
         
         return Task.FromResult(Response.FromValue(subscriptionProperties, new TestResponse(200)));
     }
@@ -220,7 +224,27 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
     public override AsyncPageable<SubscriptionRuntimeProperties> GetSubscriptionsRuntimePropertiesAsync(string topicName,
         CancellationToken cancellationToken = new())
     {
-        throw new NotImplementedException();
+        var subscriptions = _subscriptions
+            .Where(kvp => kvp.Key.StartsWith($"{topicName}/Subscriptions/"))
+            .Select(kvp => ServiceBusModelFactory.SubscriptionRuntimeProperties(
+                topicName: topicName,
+                subscriptionName: kvp.Value.SubscriptionName,
+                activeMessageCount: 0,
+                deadLetterMessageCount: 0,
+                transferMessageCount: 0,
+                transferDeadLetterMessageCount: 0,
+                createdAt: DateTimeOffset.UtcNow,
+                updatedAt: DateTimeOffset.UtcNow,
+                accessedAt: DateTimeOffset.UtcNow))
+            .ToList();
+
+        return AsyncPageable<SubscriptionRuntimeProperties>.FromPages(
+        [
+            Page<SubscriptionRuntimeProperties>.FromValues(
+                subscriptions,
+                continuationToken: null,
+                response: new TestResponse(200))
+        ]);
     }
 
     public override AsyncPageable<TopicRuntimeProperties> GetTopicsRuntimePropertiesAsync(CancellationToken cancellationToken = new()) =>
