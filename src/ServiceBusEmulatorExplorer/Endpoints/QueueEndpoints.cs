@@ -53,7 +53,16 @@ public static class QueueEndpoints
 
         await foreach (var item in queuesRuntimeProperties)
         {
-            var queue = await client.GetQueueAsync(item.Name)!;
+            QueueProperties? queueProps = null;
+            try
+            {
+                var queueResponse = await client.GetQueueAsync(item.Name);
+                queueProps = queueResponse?.Value;
+            }
+            catch (Exception)
+            {
+                // Queue properties may not be available (e.g. emulator limitation)
+            }
 
             var queueInfo = new QueueInfo(
                 item.Name,
@@ -61,9 +70,9 @@ public static class QueueEndpoints
                 item.ActiveMessageCount,
                 item.DeadLetterMessageCount,
                 item.ScheduledMessageCount,
-                queue.Value.MaxDeliveryCount,
-                queue.Value.LockDuration.ToString(),
-                queue.Value.DefaultMessageTimeToLive.ToString(),
+                queueProps?.MaxDeliveryCount,
+                queueProps?.LockDuration.ToString(),
+                queueProps?.DefaultMessageTimeToLive.ToString(),
                 item.CreatedAt);
 
             queues.Add(queueInfo);
@@ -158,7 +167,7 @@ public static class QueueEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count != 0);
+        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
 
         return Results.Ok(pagedMessages);
     }
