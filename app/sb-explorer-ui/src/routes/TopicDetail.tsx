@@ -170,8 +170,16 @@ const TopicDetail = () => {
               setSelectedIds([])
               setSkip(0)
             }}
-            activeCount={sub?.activeMessageCount}
-            deadLetterCount={sub?.deadLetterMessageCount}
+            activeCount={
+              messageState === 'active' && (messages?.data?.total ?? 0) > 0
+                ? messages!.data!.total
+                : sub?.activeMessageCount
+            }
+            deadLetterCount={
+              messageState === 'deadletter' && (messages?.data?.total ?? 0) > 0
+                ? messages!.data!.total
+                : sub?.deadLetterMessageCount
+            }
           />
 
           <Group justify="space-between" align="center">

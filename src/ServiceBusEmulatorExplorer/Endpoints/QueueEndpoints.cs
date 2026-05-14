@@ -53,7 +53,16 @@ public static class QueueEndpoints
 
         await foreach (var item in queuesRuntimeProperties)
         {
-            var queue = await client.GetQueueAsync(item.Name)!;
+            QueueProperties? queueProps = null;
+            try
+            {
+                var queueResponse = await client.GetQueueAsync(item.Name);
+                queueProps = queueResponse?.Value;
+            }
+            catch (Exception)
+            {
+                // Queue properties may not be available (e.g. emulator limitation)
+            }
 
             var queueInfo = new QueueInfo(
                 item.Name,
@@ -61,9 +70,9 @@ public static class QueueEndpoints
                 item.ActiveMessageCount,
                 item.DeadLetterMessageCount,
                 item.ScheduledMessageCount,
-                queue.Value.MaxDeliveryCount,
-                queue.Value.LockDuration.ToString(),
-                queue.Value.DefaultMessageTimeToLive.ToString(),
+                queueProps?.MaxDeliveryCount,
+                queueProps?.LockDuration.ToString(),
+                queueProps?.DefaultMessageTimeToLive.ToString(),
                 item.CreatedAt);
 
             queues.Add(queueInfo);
@@ -110,6 +119,7 @@ public static class QueueEndpoints
         [FromQuery] CaseInsensitiveEnum<PeekMode> mode,
         [FromQuery] CaseInsensitiveEnum<MessageState> state,
         ServiceBusEndpointCache endpointCache,
+        ServiceBusAdministrationClient adminClient,
         int skip = 0,
         int take = 25)
     {
@@ -158,7 +168,29 @@ public static class QueueEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count != 0);
+        // Try to get accurate total count from queue runtime properties.
+        int? runtimeTotal = null;
+        try
+        {
+            var runtimeProps = await adminClient.GetQueueRuntimePropertiesAsync(name);
+            if (runtimeProps?.Value is { } props)
+            {
+                runtimeTotal = (int)(state == MessageState.Deadletter
+                    ? props.DeadLetterMessageCount
+                    : props.ActiveMessageCount);
+            }
+        }
+        catch (Exception)
+        {
+            // Runtime properties unavailable — fall back to peeked count
+        }
+
+        var total = runtimeTotal > 0 ? runtimeTotal.Value : messageInfos.Count;
+        var hasMore = runtimeTotal > 0
+            ? skip + messageInfos.Count < runtimeTotal.Value
+            : messageInfos.Count == take;
+
+        var pagedMessages = new PagedMessages(messageInfos, total, hasMore);
 
         return Results.Ok(pagedMessages);
     }

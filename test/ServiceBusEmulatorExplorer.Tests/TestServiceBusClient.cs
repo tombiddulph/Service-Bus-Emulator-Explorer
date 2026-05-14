@@ -221,6 +221,52 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
         return Task.FromResult(Response.FromValue(subscriptionProperties, new TestResponse(200)));
     }
 
+    public override Task<Response<SubscriptionRuntimeProperties>> GetSubscriptionRuntimePropertiesAsync(
+        string topicName, string subscriptionName, CancellationToken cancellationToken = default)
+    {
+        var key = $"{topicName}/Subscriptions/{subscriptionName}";
+        if (!_subscriptions.ContainsKey(key))
+        {
+            throw new ServiceBusException($"Subscription '{subscriptionName}' not found on topic '{topicName}'.", ServiceBusFailureReason.MessagingEntityNotFound);
+        }
+
+        var runtimeProps = ServiceBusModelFactory.SubscriptionRuntimeProperties(
+            topicName: topicName,
+            subscriptionName: subscriptionName,
+            activeMessageCount: 0,
+            deadLetterMessageCount: 0,
+            transferMessageCount: 0,
+            transferDeadLetterMessageCount: 0,
+            createdAt: DateTimeOffset.UtcNow,
+            updatedAt: DateTimeOffset.UtcNow,
+            accessedAt: DateTimeOffset.UtcNow);
+
+        return Task.FromResult(Response.FromValue(runtimeProps, new TestResponse(200)));
+    }
+
+    public override Task<Response<QueueRuntimeProperties>> GetQueueRuntimePropertiesAsync(
+        string name, CancellationToken cancellationToken = default)
+    {
+        if (!_queues.ContainsKey(name))
+        {
+            throw new ServiceBusException($"Queue '{name}' not found.", ServiceBusFailureReason.MessagingEntityNotFound);
+        }
+
+        var runtimeProps = ServiceBusModelFactory.QueueRuntimeProperties(
+            name: name,
+            activeMessageCount: 0,
+            deadLetterMessageCount: 0,
+            scheduledMessageCount: 0,
+            transferMessageCount: 0,
+            transferDeadLetterMessageCount: 0,
+            sizeInBytes: 0,
+            createdAt: DateTimeOffset.UtcNow,
+            updatedAt: DateTimeOffset.UtcNow,
+            accessedAt: DateTimeOffset.UtcNow);
+
+        return Task.FromResult(Response.FromValue(runtimeProps, new TestResponse(200)));
+    }
+
     public override AsyncPageable<SubscriptionRuntimeProperties> GetSubscriptionsRuntimePropertiesAsync(string topicName,
         CancellationToken cancellationToken = new())
     {
