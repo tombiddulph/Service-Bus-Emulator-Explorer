@@ -51,9 +51,10 @@ public record SubscriptionInfo(
     long ActiveMessageCount,
     long DeadLetterMessageCount,
     long? ScheduledMessageCount = null,
-    long? MaxDeliveryCount = null,
+    int? MaxDeliveryCount = null,
     string? LockDuration = null,
-    string? DefaultTtl = null
+    string? DefaultTtl = null,
+    DateTime? CreatedAt = null
 );
 
 public record MessageInfo(

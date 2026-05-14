@@ -126,9 +126,20 @@ public static class QueueEndpoints
         IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
         try
         {
+            long fromSequenceNumber = 0;
+            if (skip > 0)
+            {
+                var skipped = await receiver.PeekMessagesAsync(
+                    maxMessages: skip, fromSequenceNumber: 0, cancellationToken: cancellationTokenSource.Token);
+                if (skipped.Count > 0)
+                {
+                    fromSequenceNumber = skipped[^1].SequenceNumber + 1;
+                }
+            }
+
             messages = await receiver.PeekMessagesAsync(
                 maxMessages: take,
-                fromSequenceNumber: long.MinValue + skip, cancellationToken: cancellationTokenSource.Token);
+                fromSequenceNumber: fromSequenceNumber, cancellationToken: cancellationTokenSource.Token);
         }
         catch (Exception)
         {

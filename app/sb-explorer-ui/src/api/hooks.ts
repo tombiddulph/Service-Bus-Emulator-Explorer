@@ -143,6 +143,7 @@ export const useSendMessage = () => {
       // Refresh lists to reflect new counts
       qc.invalidateQueries({ queryKey: ['queues'] })
       qc.invalidateQueries({ queryKey: ['topics'] })
+      qc.invalidateQueries({ queryKey: ['subs'] })
     },
   })
 }
@@ -160,6 +161,8 @@ export const useBulkDlqDelete = () => {
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['messages', scopeKey(variables.scope)] })
+      qc.invalidateQueries({ queryKey: ['subs'] })
+      qc.invalidateQueries({ queryKey: ['queues'] })
     },
   })
 }
