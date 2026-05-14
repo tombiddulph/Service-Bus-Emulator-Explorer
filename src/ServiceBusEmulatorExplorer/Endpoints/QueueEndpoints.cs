@@ -119,7 +119,6 @@ public static class QueueEndpoints
         [FromQuery] CaseInsensitiveEnum<PeekMode> mode,
         [FromQuery] CaseInsensitiveEnum<MessageState> state,
         ServiceBusEndpointCache endpointCache,
-        ServiceBusAdministrationClient adminClient,
         int skip = 0,
         int take = 25)
     {
@@ -168,29 +167,7 @@ public static class QueueEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        // Try to get accurate total count from queue runtime properties.
-        int? runtimeTotal = null;
-        try
-        {
-            var runtimeProps = await adminClient.GetQueueRuntimePropertiesAsync(name);
-            if (runtimeProps?.Value is { } props)
-            {
-                runtimeTotal = (int)(state == MessageState.Deadletter
-                    ? props.DeadLetterMessageCount
-                    : props.ActiveMessageCount);
-            }
-        }
-        catch (Exception)
-        {
-            // Runtime properties unavailable — fall back to peeked count
-        }
-
-        var total = runtimeTotal > 0 ? runtimeTotal.Value : messageInfos.Count;
-        var hasMore = runtimeTotal > 0
-            ? skip + messageInfos.Count < runtimeTotal.Value
-            : messageInfos.Count == take;
-
-        var pagedMessages = new PagedMessages(messageInfos, total, hasMore);
+        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
 
         return Results.Ok(pagedMessages);
     }

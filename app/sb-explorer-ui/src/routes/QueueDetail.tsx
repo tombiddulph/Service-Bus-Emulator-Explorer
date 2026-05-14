@@ -91,16 +91,8 @@ const QueueDetail = () => {
             setSelectedIds([])
             setSkip(0)
           }}
-          activeCount={
-            messageState === 'active' && (messages.data?.total ?? 0) > 0
-              ? messages.data!.total
-              : queue.activeMessageCount
-          }
-          deadLetterCount={
-            messageState === 'deadletter' && (messages.data?.total ?? 0) > 0
-              ? messages.data!.total
-              : queue.deadLetterMessageCount
-          }
+          activeCount={queue.activeMessageCount}
+          deadLetterCount={queue.deadLetterMessageCount}
         />
 
         <Group justify="space-between" align="center">

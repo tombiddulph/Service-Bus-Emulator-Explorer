@@ -53,31 +53,14 @@ public static class SubscriptionEndpoints
             }
             catch (Exception)
             {
-                // Subscription properties may not be available (e.g. emulator limitation or entity not found)
-            }
-
-            // Prefer individual runtime properties for accurate counts — the batch call may return 0 on the emulator
-            var activeCount = item.ActiveMessageCount;
-            var dlqCount = item.DeadLetterMessageCount;
-            try
-            {
-                var runtimeResponse = await client.GetSubscriptionRuntimePropertiesAsync(topic, item.SubscriptionName);
-                if (runtimeResponse?.Value is { } runtimeProps)
-                {
-                    activeCount = runtimeProps.ActiveMessageCount;
-                    dlqCount = runtimeProps.DeadLetterMessageCount;
-                }
-            }
-            catch (Exception)
-            {
-                // Fall back to batch runtime properties
+                // Subscription properties may not be available on some emulator builds
             }
 
             var subscriptionInfo = new SubscriptionInfo(
                 item.SubscriptionName,
                 EntityStatus.Active,
-                activeCount,
-                dlqCount,
+                item.ActiveMessageCount,
+                item.DeadLetterMessageCount,
                 MaxDeliveryCount: subProps?.MaxDeliveryCount,
                 LockDuration: subProps?.LockDuration.ToString(),
                 DefaultTtl: subProps?.DefaultMessageTimeToLive.ToString(),
@@ -151,7 +134,6 @@ public static class SubscriptionEndpoints
         CaseInsensitiveEnum<PeekMode> mode,
         CaseInsensitiveEnum<MessageState> state,
         ServiceBusEndpointCache endpointCache,
-        ServiceBusAdministrationClient adminClient,
         int skip = 0,
         int take = 25)
     {
@@ -203,30 +185,7 @@ public static class SubscriptionEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        // Try to get accurate total count from subscription runtime properties.
-        // The emulator may return 0 from GetSubscriptionsRuntimePropertiesAsync, so we query individually here.
-        int? runtimeTotal = null;
-        try
-        {
-            var runtimeProps = await adminClient.GetSubscriptionRuntimePropertiesAsync(topic, sub);
-            if (runtimeProps?.Value is { } props)
-            {
-                runtimeTotal = (int)(state.Value == MessageState.Deadletter
-                    ? props.DeadLetterMessageCount
-                    : props.ActiveMessageCount);
-            }
-        }
-        catch (Exception)
-        {
-            // Runtime properties unavailable — fall back to peeked count
-        }
-
-        var total = runtimeTotal > 0 ? runtimeTotal.Value : messageInfos.Count;
-        var hasMore = runtimeTotal > 0
-            ? skip + messageInfos.Count < runtimeTotal.Value
-            : messageInfos.Count == take;
-
-        var pagedMessages = new PagedMessages(messageInfos, total, hasMore);
+        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
 
         return Results.Ok(pagedMessages);
     }
