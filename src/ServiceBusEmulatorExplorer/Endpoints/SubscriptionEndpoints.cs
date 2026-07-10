@@ -45,11 +45,15 @@ public static class SubscriptionEndpoints
 
         await foreach (var item in subscriptionsRuntimeProperties)
         {
-            var subscription = await client.GetSubscriptionAsync(topic, item.SubscriptionName);
-
-            if (subscription is null)
+            SubscriptionProperties? subProps = null;
+            try
             {
-                continue;
+                var subResponse = await client.GetSubscriptionAsync(topic, item.SubscriptionName);
+                subProps = subResponse?.Value;
+            }
+            catch (Exception)
+            {
+                // Subscription properties may not be available on some emulator builds
             }
 
             var subscriptionInfo = new SubscriptionInfo(
@@ -57,9 +61,9 @@ public static class SubscriptionEndpoints
                 EntityStatus.Active,
                 item.ActiveMessageCount,
                 item.DeadLetterMessageCount,
-                MaxDeliveryCount: subscription.Value.MaxDeliveryCount,
-                LockDuration: subscription.Value.LockDuration.ToString(),
-                DefaultTtl: subscription.Value.DefaultMessageTimeToLive.ToString(),
+                MaxDeliveryCount: subProps?.MaxDeliveryCount,
+                LockDuration: subProps?.LockDuration.ToString(),
+                DefaultTtl: subProps?.DefaultMessageTimeToLive.ToString(),
                 CreatedAt: item.CreatedAt.UtcDateTime
             );
 
@@ -145,7 +149,6 @@ public static class SubscriptionEndpoints
 
         var receiver = endpointCache.GetTopicReceiver(topic, sub, options);
 
-        
         using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
         try
@@ -182,7 +185,7 @@ public static class SubscriptionEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count != 0);
+        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
 
         return Results.Ok(pagedMessages);
     }
