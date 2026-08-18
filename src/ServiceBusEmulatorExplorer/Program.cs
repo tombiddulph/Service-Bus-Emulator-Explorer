@@ -106,7 +106,9 @@ app.UseStatusCodePages(async statusCodeContext =>
 
 app.UseHttpsRedirection();
 
-app.MapGroup("/api")
+var api = app.MapGroup("/api");
+api.MapGet("/environment", (IHostEnvironment environment) => Results.Ok(new EnvironmentInfo(environment.EnvironmentName)));
+api
     .MapQueueEndpoints()
     .MapTopicEndpoints()
     .MapSubscriptionEndpoints()

@@ -8,6 +8,7 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(List<TopicInfo>))]
 [JsonSerializable(typeof(SubscriptionInfo))]
 [JsonSerializable(typeof(List<SubscriptionInfo>))]
+[JsonSerializable(typeof(EnvironmentInfo))]
 [JsonSerializable(typeof(MessageInfo))]
 [JsonSerializable(typeof(PagedMessages))]
 [JsonSerializable(typeof(SendMessageRequest))]
@@ -15,4 +16,5 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(CreateSubscriptionRequest))]
 [JsonSerializable(typeof(CreateQueueRequest))]
 [JsonSerializable(typeof(BulkDlqDeleteRequest))]
+[JsonSerializable(typeof(ReplayDlqRequest))]
 public partial class AppJsonContext : JsonSerializerContext;

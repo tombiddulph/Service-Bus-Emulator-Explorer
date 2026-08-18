@@ -2,6 +2,8 @@ using System.Text.Json.Serialization;
 
 namespace ServiceBusEmulatorExplorer;
 
+public record EnvironmentInfo(string Name);
+
 [JsonConverter(typeof(JsonStringEnumConverter<EntityStatus>))]
 public enum EntityStatus
 {
@@ -102,4 +104,12 @@ public record CreateSubscriptionRequest(
 
 public record BulkDlqDeleteRequest(
     List<string>? MessageIds = null
+);
+
+public record ReplayDlqRequest(
+    List<string>? MessageIds = null,
+    string? Body = null,
+    string? ContentType = null,
+    Dictionary<string, object>? UserProperties = null,
+    bool RemoveFromDlq = true
 );
