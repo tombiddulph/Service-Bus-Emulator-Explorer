@@ -30,7 +30,7 @@
     networks:
       sb-emulator:
         aliases:
-          - "serivcebus-emulator"
+          - "servicebus-emulator"
   sql:
     container_name: "sql"
     image: "mcr.microsoft.com/mssql/server:latest"
