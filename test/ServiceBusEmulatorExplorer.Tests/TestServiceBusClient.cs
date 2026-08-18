@@ -13,6 +13,7 @@ public class TestServiceBusClient : ServiceBusClient
     private readonly Dictionary<string, TestServiceBusReceiver> _queueReceivers = [];
     private readonly Dictionary<string, TestServiceBusReceiver> _topicReceivers = [];
     private readonly Dictionary<string, TestServiceBusSender> _senders = [];
+    private readonly Dictionary<string, List<ServiceBusReceivedMessage>> _deadLetterMessages = [];
 
 
     public override ServiceBusSender CreateSender(string queueOrTopicName)
@@ -28,7 +29,7 @@ public class TestServiceBusClient : ServiceBusClient
     public override ServiceBusReceiver CreateReceiver(string queueName,
         ServiceBusReceiverOptions receiverOptions = null)
     {
-        var receiver = new TestServiceBusReceiver(queueName, this);
+        var receiver = new TestServiceBusReceiver(queueName, this, receiverOptions?.SubQueue == SubQueue.DeadLetter);
         _queueReceivers[queueName] = receiver;
 
         return receiver;
@@ -38,12 +39,37 @@ public class TestServiceBusClient : ServiceBusClient
         ServiceBusReceiverOptions options)
     {
         var key = $"{topicName}/Subscriptions/{subscriptionName}";
-        var receiver = new TestServiceBusReceiver(key, this);
+        var receiver = new TestServiceBusReceiver(key, this, options.SubQueue == SubQueue.DeadLetter);
         _topicReceivers[key] = receiver;
 
         return receiver;
     }
 
+    public void AddDeadLetterMessage(string entityPath, string messageId, string body, string? contentType = null,
+        IDictionary<string, object>? applicationProperties = null)
+    {
+        var message = ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: BinaryData.FromString(body),
+            messageId: messageId,
+            contentType: contentType,
+            properties: applicationProperties);
+
+        if (!_deadLetterMessages.TryGetValue(entityPath, out var messages))
+        {
+            messages = [];
+            _deadLetterMessages[entityPath] = messages;
+        }
+
+        messages.Add(message);
+    }
+
+    public IReadOnlyList<ServiceBusMessage> GetSentMessages(string entityPath) =>
+        _senders.GetValueOrDefault(entityPath)?.Messages ?? [];
+
+    public IReadOnlyList<ServiceBusReceivedMessage> GetDeadLetterMessages(string entityPath) =>
+        _deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
+
+    public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private class TestServiceBusSender(string entityPath) : ServiceBusSender
     {
@@ -57,9 +83,11 @@ public class TestServiceBusClient : ServiceBusClient
             Messages.Add(message);
             return Task.CompletedTask;
         }
+
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client) : ServiceBusReceiver
+    public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver) : ServiceBusReceiver
     {
         public override string EntityPath => entityPath;
 
@@ -82,6 +110,27 @@ public class TestServiceBusClient : ServiceBusClient
             return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
 
         }
+
+        public override Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveMessagesAsync(int maxMessages,
+            TimeSpan? maxWaitTime = null, CancellationToken cancellationToken = new())
+        {
+            if (!isDeadLetterReceiver)
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+
+            var messages = client._deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
+            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages.Take(maxMessages).ToList());
+        }
+
+        public override Task CompleteMessageAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
+        {
+            client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(message);
+            return Task.CompletedTask;
+        }
+
+        public override Task AbandonMessageAsync(ServiceBusReceivedMessage message,
+            IDictionary<string, object>? propertiesToModify = null, CancellationToken cancellationToken = new()) => Task.CompletedTask;
+
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
 
