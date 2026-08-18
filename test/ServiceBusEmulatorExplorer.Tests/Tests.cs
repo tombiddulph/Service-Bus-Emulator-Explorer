@@ -3,6 +3,9 @@ using System.Net.Http.Json;
 
 namespace ServiceBusEmulatorExplorer.Tests;
 
+// WebApplicationFactory.WithWebHostBuilder mutates a non-thread-safe list on the class-level root
+// factory, which corrupts and throws on disposal when tests build their factories concurrently.
+[NotInParallel]
 public class Tests : TestBase
 {
     [Test]
@@ -11,7 +14,7 @@ public class Tests : TestBase
         var client = Factory.CreateClient();
         var response = await client.GetAsync("/health");
 
-        await Assert.That(response.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(response.IsSuccessStatusCode).IsTrue();
     }
 
     [Test]
@@ -20,7 +23,7 @@ public class Tests : TestBase
         var client = Factory.CreateClient();
         var response = await client.PostAsync("/api/queues", JsonContent.Create(new { name = "test-queue" }));
 
-        await Assert.That(response.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(response.IsSuccessStatusCode).IsTrue();
 
         var getResponse = await client.GetAsync("/api/queues/");
         await Assert.That(getResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -30,7 +33,7 @@ public class Tests : TestBase
         await Assert.That(queues).Contains(x => x.Name == "test-queue");
 
         var deleteResponse = await client.DeleteAsync("/api/queues/test-queue");
-        await Assert.That(deleteResponse.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(deleteResponse.IsSuccessStatusCode).IsTrue();
 
         var getAfterDeleteResponse = await client.GetAsync("/api/queues/");
         await Assert.That(getAfterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -44,7 +47,7 @@ public class Tests : TestBase
     {
         var client = Factory.CreateClient();
         var response = await client.PostAsync("/api/topics", JsonContent.Create(new { name = "test-topic" }));
-        await Assert.That(response.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(response.IsSuccessStatusCode).IsTrue();
 
         var getResponse = await client.GetAsync("/api/topics/");
         await Assert.That(getResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -52,7 +55,7 @@ public class Tests : TestBase
         var topics = await getResponse.Content.ReadFromJsonAsync<List<TopicInfo>>();
         await Assert.That(topics).Contains(x => x.Name == "test-topic");
         var deleteResponse = await client.DeleteAsync("/api/topics/test-topic");
-        await Assert.That(deleteResponse.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(deleteResponse.IsSuccessStatusCode).IsTrue();
         var getAfterDeleteResponse = await client.GetAsync("/api/topics/");
         await Assert.That(getAfterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var topicsAfterDelete = await getAfterDeleteResponse.Content.ReadFromJsonAsync<List<TopicInfo>>();
@@ -66,7 +69,7 @@ public class Tests : TestBase
 
         // Create topic first
         var topicResponse = await client.PostAsync("/api/topics", JsonContent.Create(new { name = "sub-test-topic" }));
-        await Assert.That(topicResponse.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(topicResponse.IsSuccessStatusCode).IsTrue();
 
         // Create subscription with custom properties
         var createSubResponse = await client.PostAsync("/api/topics/sub-test-topic/subscriptions",
@@ -77,7 +80,7 @@ public class Tests : TestBase
                 lockDuration = "00:02:00",
                 defaultTtl = "01:00:00"
             }));
-        await Assert.That(createSubResponse.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(createSubResponse.IsSuccessStatusCode).IsTrue();
 
         // List subscriptions and verify properties
         var getResponse = await client.GetAsync("/api/topics/sub-test-topic/subscriptions");
@@ -96,7 +99,7 @@ public class Tests : TestBase
 
         // Delete subscription
         var deleteResponse = await client.DeleteAsync("/api/topics/sub-test-topic/subscriptions/test-sub");
-        await Assert.That(deleteResponse.IsSuccessStatusCode).IsEqualTo(true);
+        await Assert.That(deleteResponse.IsSuccessStatusCode).IsTrue();
 
         // Verify deletion
         var getAfterDeleteResponse = await client.GetAsync("/api/topics/sub-test-topic/subscriptions");
