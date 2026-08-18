@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { Outlet } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   ActionIcon,
   AppShell as MantineAppShell,
@@ -23,10 +24,23 @@ import {
 import NavTree from '../components/NavTree'
 import MockBanner from '../components/MockBanner'
 import { useAppContext } from '../App'
+import { useEnvironment } from '../api/hooks'
+
+const environmentStyles: Record<string, { backgroundColor: string; label: string }> = {
+  development: { backgroundColor: '#2f9e44', label: 'Development' },
+  test: { backgroundColor: '#e67700', label: 'Test' },
+  production: { backgroundColor: '#862e2e', label: 'Production' },
+}
 
 const ShellHeader = ({ actions, chrome }: { actions?: ReactNode; chrome: { headerBg: string; headerText: string } }) => {
   const { theme, toggleTheme } = useAppContext()
+  const queryClient = useQueryClient()
+  const { data: environment } = useEnvironment()
   const isLight = theme === 'light'
+  const environmentBadge = environmentStyles[environment?.toLowerCase() ?? ''] ?? {
+    backgroundColor: '#495057',
+    label: environment ?? 'Environment',
+  }
 
   return (
     <Box
@@ -65,6 +79,13 @@ const ShellHeader = ({ actions, chrome }: { actions?: ReactNode; chrome: { heade
           <Badge color="blue" variant="filled" radius="sm">
             Emulator
           </Badge>
+          <Badge
+            variant="filled"
+            radius="sm"
+            style={{ backgroundColor: environmentBadge.backgroundColor, color: '#fff' }}
+          >
+            {environmentBadge.label}
+          </Badge>
         </Group>
       </Group>
 
@@ -75,7 +96,7 @@ const ShellHeader = ({ actions, chrome }: { actions?: ReactNode; chrome: { heade
             variant="subtle"
             color="gray.0"
             aria-label="Refresh"
-            onClick={() => window.location.reload()}
+            onClick={() => queryClient.invalidateQueries()}
             style={{ color: chrome.headerText }}
           >
             <IconRefresh size={18} />

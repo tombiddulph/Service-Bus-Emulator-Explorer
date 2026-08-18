@@ -63,6 +63,11 @@ export const dlqPath = (scope: MessageScope) => {
   return `/deadletter/subscription/${scope.topic}/${scope.subscription}/delete`;
 };
 
+export const replayDlqPath = (scope: MessageScope) => {
+  if (scope.type === "queue") return `/deadletter/queue/${scope.name}/replay`;
+  return `/deadletter/subscription/${scope.topic}/${scope.subscription}/replay`;
+};
+
 const respond = <T>(data: T, config: AxiosRequestConfig) =>
   Promise.resolve({
     data,
@@ -224,6 +229,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
           createdAt: new Date().toISOString(),
         });
       }
+
       return respond({}, config);
     }
     if (method === "delete" && path?.startsWith("/queues/")) {

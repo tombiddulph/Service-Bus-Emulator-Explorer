@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Button, Group, Loader, Paper, Stack, Table, Text } from '@mantine/core'
+import { ActionIcon, Button, Checkbox, Group, Loader, Paper, Stack, Table, Text, Tooltip } from '@mantine/core'
+import { IconRefresh } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import EntityHeader from '../components/EntityHeader'
 import EntityOverviewCard from '../components/EntityOverviewCard'
@@ -19,6 +20,7 @@ import {
   useSendMessage,
   useSubscriptions,
   useTopics,
+  useReplayDlq,
 } from '../api/hooks'
 import type { MessageState, TopicInfo } from '../api/types'
 import StatusPill from '../components/StatusPill'
@@ -45,6 +47,7 @@ const TopicDetail = () => {
   const [createSubOpen, setCreateSubOpen] = useState(false)
   const [deleteTopicOpen, setDeleteTopicOpen] = useState(false)
   const [deleteSubOpen, setDeleteSubOpen] = useState(false)
+  const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messageScope = useMemo(
     () => ({ type: 'subscription', topic: name ?? '', subscription: subscription ?? '' } as const),
@@ -60,6 +63,7 @@ const TopicDetail = () => {
   })
 
   const bulkDelete = useBulkDlqDelete()
+  const replayDlq = useReplayDlq()
   const sendMessage = useSendMessage()
   const createSubscription = useCreateSubscription(name ?? '')
   const deleteSubscription = useDeleteSubscription(name ?? '')
@@ -175,39 +179,47 @@ const TopicDetail = () => {
           />
 
           <Group justify="space-between" align="center">
-            <Text fw={600}>Messages</Text>
+            <Group gap="xs">
+              <Text fw={600}>Messages</Text>
+              <Tooltip label="Refresh subscription messages">
+                <ActionIcon variant="light" aria-label="Refresh subscription messages" onClick={() => messages.refetch()} loading={messages.isFetching}>
+                  <IconRefresh size={16} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
             {messageState === 'deadletter' && (
-              <Button
-                color="red"
-                disabled={selectedIds.length === 0 || bulkDelete.isPending}
-                onClick={() =>
-                  bulkDelete.mutate(
-                    {
-                      scope: { type: 'subscription', topic: name, subscription },
-                      messageIds: selectedIds,
-                    },
-                    {
-                      onSuccess: () => {
-                        notifications.show({
-                          title: 'DLQ cleared',
-                          message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`,
-                          color: 'green',
-                        })
-                        setSelectedIds([])
+              <Group gap="xs">
+                <Checkbox
+                  label="Remove from DLQ"
+                  checked={removeFromDlq}
+                  onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
+                />
+                <Button
+                  color="teal"
+                  disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
+                  onClick={() => replayDlq.mutate({ scope: messageScope, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq })}
+                >
+                  {selectedIds.length ? 'Replay selected' : 'Replay all'}
+                </Button>
+                <Button
+                  color="red"
+                  disabled={selectedIds.length === 0 || bulkDelete.isPending}
+                  onClick={() =>
+                    bulkDelete.mutate(
+                      { scope: { type: 'subscription', topic: name, subscription }, messageIds: selectedIds },
+                      {
+                        onSuccess: () => {
+                          notifications.show({ title: 'DLQ cleared', message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`, color: 'green' })
+                          setSelectedIds([])
+                        },
+                        onError: (error) => {
+                          notifications.show({ title: 'DLQ delete failed', message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.', color: 'red' })
+                        },
                       },
-                      onError: (error) => {
-                        notifications.show({
-                          title: 'DLQ delete failed',
-                          message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.',
-                          color: 'red',
-                        })
-                      },
-                    },
-                  )
-                }
-              >
-                Delete selected DLQ
-              </Button>
+                    )
+                  }
+                >Delete selected DLQ</Button>
+              </Group>
             )}
           </Group>
 
@@ -230,7 +242,16 @@ const TopicDetail = () => {
         renderSubscriptionList()
       )}
 
-      <MessageDetailPanel message={inspectingMessage} open={!!inspect} onOpenChange={(open) => !open && setInspect(undefined)} />
+      <MessageDetailPanel
+        message={inspectingMessage}
+        open={!!inspect}
+        onOpenChange={(open) => !open && setInspect(undefined)}
+        editable={messageState === 'deadletter'}
+        onSaveAndRequeue={(body, removeFromDlq) => {
+          if (!inspectingMessage) return
+          replayDlq.mutate({ scope: messageScope, messageIds: [inspectingMessage.messageId], body, removeFromDlq }, { onSuccess: () => setInspect(undefined) })
+        }}
+      />
 
       <SendMessageDialog
         open={sendOpen}

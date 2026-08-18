@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Button, Group, Loader, Stack, Text } from '@mantine/core'
+import { Button, Checkbox, Group, Loader, Stack, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import EntityHeader from '../components/EntityHeader'
 import EntityOverviewCard from '../components/EntityOverviewCard'
@@ -14,6 +14,7 @@ import {
   useDeleteQueue,
   useMessages,
   useQueues,
+  useReplayDlq,
   useSendMessage,
 } from '../api/hooks'
 import type { MessageState, QueueInfo } from '../api/types'
@@ -34,6 +35,7 @@ const QueueDetail = () => {
   const [inspect, setInspect] = useState<string | undefined>()
   const [sendOpen, setSendOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messages = useMessages({
     scope: { type: 'queue', name: name ?? '' },
@@ -44,6 +46,7 @@ const QueueDetail = () => {
   })
 
   const bulkDelete = useBulkDlqDelete()
+  const replayDlq = useReplayDlq()
   const sendMessage = useSendMessage()
   const deleteQueue = useDeleteQueue()
 
@@ -98,37 +101,38 @@ const QueueDetail = () => {
         <Group justify="space-between" align="center">
           <Text fw={600}>Messages</Text>
             {messageState === 'deadletter' && (
-              <Button
-                color="red"
-                disabled={selectedIds.length === 0 || bulkDelete.isPending}
-                onClick={() =>
-                  bulkDelete.mutate(
-                    {
-                      scope: { type: 'queue', name },
-                      messageIds: selectedIds,
-                    },
-                    {
-                      onSuccess: () => {
-                        notifications.show({
-                          title: 'DLQ cleared',
-                          message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`,
-                          color: 'green',
-                        })
-                        setSelectedIds([])
+              <Group gap="xs">
+                <Checkbox
+                  label="Remove from DLQ"
+                  checked={removeFromDlq}
+                  onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
+                />
+                <Button
+                  color="teal"
+                  disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
+                  onClick={() => replayDlq.mutate({ scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq })}
+                >
+                  {selectedIds.length ? 'Replay selected' : 'Replay all'}
+                </Button>
+                <Button
+                  color="red"
+                  disabled={selectedIds.length === 0 || bulkDelete.isPending}
+                  onClick={() =>
+                    bulkDelete.mutate(
+                      { scope: { type: 'queue', name }, messageIds: selectedIds },
+                      {
+                        onSuccess: () => {
+                          notifications.show({ title: 'DLQ cleared', message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`, color: 'green' })
+                          setSelectedIds([])
+                        },
+                        onError: (error) => {
+                          notifications.show({ title: 'DLQ delete failed', message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.', color: 'red' })
+                        },
                       },
-                      onError: (error) => {
-                        notifications.show({
-                          title: 'DLQ delete failed',
-                          message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.',
-                          color: 'red',
-                        })
-                      },
-                    },
-                  )
-                }
-              >
-                Delete selected DLQ
-              </Button>
+                    )
+                  }
+                >Delete selected DLQ</Button>
+              </Group>
             )}
         </Group>
 
@@ -148,7 +152,16 @@ const QueueDetail = () => {
         />
       </Stack>
 
-      <MessageDetailPanel message={inspectingMessage} open={!!inspect} onOpenChange={(open) => !open && setInspect(undefined)} />
+      <MessageDetailPanel
+        message={inspectingMessage}
+        open={!!inspect}
+        onOpenChange={(open) => !open && setInspect(undefined)}
+        editable={messageState === 'deadletter'}
+        onSaveAndRequeue={(body, removeFromDlq) => {
+          if (!inspectingMessage || !name) return
+          replayDlq.mutate({ scope: { type: 'queue', name }, messageIds: [inspectingMessage.messageId], body, removeFromDlq }, { onSuccess: () => setInspect(undefined) })
+        }}
+      />
 
       <SendMessageDialog
         open={sendOpen}
