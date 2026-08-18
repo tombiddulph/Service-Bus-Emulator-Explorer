@@ -40,7 +40,9 @@ public static class QueueEndpoints
         return app;
     }
 
-    private static async Task<IResult> ListQueues([FromServices] ServiceBusAdministrationClient client)
+    private static async Task<IResult> ListQueues(
+        [FromServices] ServiceBusAdministrationClient client,
+        [FromServices] ServiceBusEndpointCache endpointCache)
     {
         var queuesRuntimeProperties = client.GetQueuesRuntimePropertiesAsync();
 
@@ -64,11 +66,16 @@ public static class QueueEndpoints
                 // Queue properties may not be available (e.g. emulator limitation)
             }
 
+            var activeCount = await Helpers.CountMessagesAsync(
+                endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+            var deadLetterCount = await Helpers.CountMessagesAsync(
+                endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+
             var queueInfo = new QueueInfo(
                 item.Name,
                 EntityStatus.Active,
-                item.ActiveMessageCount,
-                item.DeadLetterMessageCount,
+                activeCount,
+                deadLetterCount,
                 item.ScheduledMessageCount,
                 queueProps?.MaxDeliveryCount,
                 queueProps?.LockDuration.ToString(),

@@ -33,7 +33,7 @@ public static class TopicEndpoints
         return app;
     }
 
-    private static async Task<IResult> ListTopics(ServiceBusAdministrationClient client)
+    private static async Task<IResult> ListTopics(ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache)
     {
         var topicsRuntimeProperties = client.GetTopicsRuntimePropertiesAsync();
         if (topicsRuntimeProperties is null)
@@ -45,14 +45,21 @@ public static class TopicEndpoints
 
         await foreach (var item in topicsRuntimeProperties)
         {
-            
-          
+            long activeCount = 0;
+            long deadLetterCount = 0;
+            await foreach (var subscription in client.GetSubscriptionsRuntimePropertiesAsync(item.Name))
+            {
+                activeCount += await Helpers.CountMessagesAsync(
+                    endpointCache.GetTopicReceiver(item.Name, subscription.SubscriptionName, new() { SubQueue = SubQueue.None }));
+                deadLetterCount += await Helpers.CountMessagesAsync(
+                    endpointCache.GetTopicReceiver(item.Name, subscription.SubscriptionName, new() { SubQueue = SubQueue.DeadLetter }));
+            }
 
             var topicInfo = new TopicInfo(
                 item.Name,
                 EntityStatus.Active,
-                0,
-                0
+                checked((int)Math.Min(activeCount, int.MaxValue)),
+                checked((int)Math.Min(deadLetterCount, int.MaxValue))
             );
 
             topics.Add(topicInfo);

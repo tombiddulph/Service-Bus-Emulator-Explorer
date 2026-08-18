@@ -33,7 +33,10 @@ public static class SubscriptionEndpoints
         return app;
     }
 
-    private static async Task<IResult> ListSubscriptions(string topic, ServiceBusAdministrationClient client)
+    private static async Task<IResult> ListSubscriptions(
+        string topic,
+        ServiceBusAdministrationClient client,
+        ServiceBusEndpointCache endpointCache)
     {
         var subscriptionsRuntimeProperties = client.GetSubscriptionsRuntimePropertiesAsync(topic);
         if (subscriptionsRuntimeProperties is null)
@@ -56,11 +59,16 @@ public static class SubscriptionEndpoints
                 // Subscription properties may not be available on some emulator builds
             }
 
+            var activeCount = await Helpers.CountMessagesAsync(
+                endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+            var deadLetterCount = await Helpers.CountMessagesAsync(
+                endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+
             var subscriptionInfo = new SubscriptionInfo(
                 item.SubscriptionName,
                 EntityStatus.Active,
-                item.ActiveMessageCount,
-                item.DeadLetterMessageCount,
+                activeCount,
+                deadLetterCount,
                 MaxDeliveryCount: subProps?.MaxDeliveryCount,
                 LockDuration: subProps?.LockDuration.ToString(),
                 DefaultTtl: subProps?.DefaultMessageTimeToLive.ToString(),
