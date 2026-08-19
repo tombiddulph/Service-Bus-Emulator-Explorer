@@ -46,19 +46,27 @@ public class TestServiceBusClient : ServiceBusClient
     }
 
     public void AddDeadLetterMessage(string entityPath, string messageId, string body, string? contentType = null,
-        IDictionary<string, object>? applicationProperties = null)
+        IDictionary<string, object>? applicationProperties = null, string? partitionKey = null, string? sessionId = null,
+        TimeSpan? timeToLive = null, string? correlationId = null, string? subject = null, string? replyTo = null)
     {
-        var message = ServiceBusModelFactory.ServiceBusReceivedMessage(
-            body: BinaryData.FromString(body),
-            messageId: messageId,
-            contentType: contentType,
-            properties: applicationProperties);
-
         if (!_deadLetterMessages.TryGetValue(entityPath, out var messages))
         {
             messages = [];
             _deadLetterMessages[entityPath] = messages;
         }
+
+        var message = ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: BinaryData.FromString(body),
+            messageId: messageId,
+            partitionKey: partitionKey,
+            sessionId: sessionId,
+            timeToLive: timeToLive ?? TimeSpan.FromMinutes(5),
+            correlationId: correlationId,
+            subject: subject,
+            contentType: contentType,
+            replyTo: replyTo,
+            properties: applicationProperties,
+            sequenceNumber: messages.Count + 1);
 
         messages.Add(message);
     }
@@ -89,14 +97,31 @@ public class TestServiceBusClient : ServiceBusClient
 
     public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver) : ServiceBusReceiver
     {
+        private readonly HashSet<long> _locked = [];
+
         public override string EntityPath => entityPath;
 
+        private List<ServiceBusReceivedMessage> DeadLetterMessages =>
+            client._deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
 
         public override Task<IReadOnlyList<ServiceBusReceivedMessage>> PeekMessagesAsync(int maxMessages, long? fromSequenceNumber = null,
             CancellationToken cancellationToken = new())
         {
-            var sender = client._senders.GetValueOrDefault(entityPath) ?? throw new InvalidOperationException($"No sender found for entity path '{entityPath}'");
-            
+            // Peeking sees locked messages too, so this deliberately ignores _locked.
+            if (isDeadLetterReceiver)
+            {
+                var deadLettered = DeadLetterMessages
+                    .Where(m => m.SequenceNumber >= (fromSequenceNumber ?? 0))
+                    .Take(maxMessages)
+                    .ToList();
+
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(deadLettered);
+            }
+
+            var sender = client._senders.GetValueOrDefault(entityPath);
+            if (sender is null)
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+
             var messages = sender.Messages
                 .Skip((int)(fromSequenceNumber ?? 0))
                 .Take(maxMessages)
@@ -106,9 +131,8 @@ public class TestServiceBusClient : ServiceBusClient
                     sequenceNumber: sender.Messages.IndexOf(m) + 1))
                 .ToList()
                 .AsReadOnly();
-            
-            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
 
+            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
         }
 
         public override Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveMessagesAsync(int maxMessages,
@@ -117,18 +141,30 @@ public class TestServiceBusClient : ServiceBusClient
             if (!isDeadLetterReceiver)
                 return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
 
-            var messages = client._deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
-            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages.Take(maxMessages).ToList());
+            var messages = DeadLetterMessages
+                .Where(m => !_locked.Contains(m.SequenceNumber))
+                .Take(maxMessages)
+                .ToList();
+
+            foreach (var message in messages)
+                _locked.Add(message.SequenceNumber);
+
+            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
         }
 
         public override Task CompleteMessageAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
         {
             client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(message);
+            _locked.Remove(message.SequenceNumber);
             return Task.CompletedTask;
         }
 
         public override Task AbandonMessageAsync(ServiceBusReceivedMessage message,
-            IDictionary<string, object>? propertiesToModify = null, CancellationToken cancellationToken = new()) => Task.CompletedTask;
+            IDictionary<string, object>? propertiesToModify = null, CancellationToken cancellationToken = new())
+        {
+            _locked.Remove(message.SequenceNumber);
+            return Task.CompletedTask;
+        }
 
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
