@@ -59,20 +59,25 @@ public static class SubscriptionEndpoints
                 // Subscription properties may not be available on some emulator builds
             }
 
-            var activeCount = await Helpers.CountMessagesAsync(
-                endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
-            var deadLetterCount = await Helpers.CountMessagesAsync(
-                endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+            var activeCountTask = Helpers.CountMessagesAsync(
+                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+            var deadLetterCountTask = Helpers.CountMessagesAsync(
+                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+            await Task.WhenAll(activeCountTask, deadLetterCountTask);
+            var activeCount = activeCountTask.Result;
+            var deadLetterCount = deadLetterCountTask.Result;
 
             var subscriptionInfo = new SubscriptionInfo(
                 item.SubscriptionName,
                 EntityStatus.Active,
-                activeCount,
-                deadLetterCount,
+                activeCount.Count,
+                deadLetterCount.Count,
                 MaxDeliveryCount: subProps?.MaxDeliveryCount,
                 LockDuration: subProps?.LockDuration.ToString(),
                 DefaultTtl: subProps?.DefaultMessageTimeToLive.ToString(),
-                CreatedAt: item.CreatedAt.UtcDateTime
+                CreatedAt: item.CreatedAt.UtcDateTime,
+                ActiveMessageCountIsExact: activeCount.IsExact,
+                DeadLetterMessageCountIsExact: deadLetterCount.IsExact
             );
 
             subscriptions.Add(subscriptionInfo);
@@ -161,6 +166,8 @@ public static class SubscriptionEndpoints
         IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
         try
         {
+            await using var _ = await endpointCache.LockAsync(receiver, cancellationTokenSource.Token);
+
             long fromSequenceNumber = 0;
             if (skip > 0)
             {

@@ -2,10 +2,14 @@
 
 namespace ServiceBusEmulatorExplorer;
 
+// IsExact is false when the scan hit maxToCount (there may be more beyond it) or was cut short by a timeout/error.
+public readonly record struct MessageCountResult(long Count, bool IsExact);
+
 public static class Helpers
 {
     // The emulator's admin runtime properties always report 0 for message counts, so peek-count instead.
-    public static async Task<long> CountMessagesAsync(
+    public static async Task<MessageCountResult> CountMessagesAsync(
+        ServiceBusEndpointCache endpointCache,
         ServiceBusReceiver receiver,
         long maxToCount = 1000,
         TimeSpan? timeout = null)
@@ -14,8 +18,11 @@ public static class Helpers
 
         long count = 0;
         long fromSequenceNumber = 0;
+        var isExact = true;
         try
         {
+            await using var _ = await endpointCache.LockAsync(receiver, cts.Token);
+
             while (count < maxToCount)
             {
                 var batch = await receiver.PeekMessagesAsync(
@@ -34,13 +41,20 @@ public static class Helpers
                     break;
                 }
             }
+
+            // Loop exited because the cap was hit, not because the queue was exhausted - there may be more.
+            if (count >= maxToCount)
+            {
+                isExact = false;
+            }
         }
         catch (Exception)
         {
-            // ignored - best effort count
+            // best-effort count; whatever was scanned before the timeout/error is a lower bound, not exact
+            isExact = false;
         }
 
-        return count;
+        return new MessageCountResult(count, isExact);
     }
 }
 

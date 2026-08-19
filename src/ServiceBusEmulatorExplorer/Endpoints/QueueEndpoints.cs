@@ -66,21 +66,26 @@ public static class QueueEndpoints
                 // Queue properties may not be available (e.g. emulator limitation)
             }
 
-            var activeCount = await Helpers.CountMessagesAsync(
-                endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
-            var deadLetterCount = await Helpers.CountMessagesAsync(
-                endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+            var activeCountTask = Helpers.CountMessagesAsync(
+                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+            var deadLetterCountTask = Helpers.CountMessagesAsync(
+                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+            await Task.WhenAll(activeCountTask, deadLetterCountTask);
+            var activeCount = activeCountTask.Result;
+            var deadLetterCount = deadLetterCountTask.Result;
 
             var queueInfo = new QueueInfo(
                 item.Name,
                 EntityStatus.Active,
-                activeCount,
-                deadLetterCount,
+                activeCount.Count,
+                deadLetterCount.Count,
                 item.ScheduledMessageCount,
                 queueProps?.MaxDeliveryCount,
                 queueProps?.LockDuration.ToString(),
                 queueProps?.DefaultMessageTimeToLive.ToString(),
-                item.CreatedAt);
+                item.CreatedAt,
+                ActiveMessageCountIsExact: activeCount.IsExact,
+                DeadLetterMessageCountIsExact: deadLetterCount.IsExact);
 
             queues.Add(queueInfo);
         }
@@ -142,6 +147,8 @@ public static class QueueEndpoints
         IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
         try
         {
+            await using var _ = await endpointCache.LockAsync(receiver, cancellationTokenSource.Token);
+
             long fromSequenceNumber = 0;
             if (skip > 0)
             {

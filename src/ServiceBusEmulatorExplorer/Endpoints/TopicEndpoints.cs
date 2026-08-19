@@ -45,21 +45,40 @@ public static class TopicEndpoints
 
         await foreach (var item in topicsRuntimeProperties)
         {
-            long activeCount = 0;
-            long deadLetterCount = 0;
+            var subscriptionNames = new List<string>();
             await foreach (var subscription in client.GetSubscriptionsRuntimePropertiesAsync(item.Name))
             {
-                activeCount += await Helpers.CountMessagesAsync(
-                    endpointCache.GetTopicReceiver(item.Name, subscription.SubscriptionName, new() { SubQueue = SubQueue.None }));
-                deadLetterCount += await Helpers.CountMessagesAsync(
-                    endpointCache.GetTopicReceiver(item.Name, subscription.SubscriptionName, new() { SubQueue = SubQueue.DeadLetter }));
+                subscriptionNames.Add(subscription.SubscriptionName);
+            }
+
+            var countResults = await Task.WhenAll(subscriptionNames.Select(async subscriptionName =>
+            {
+                var active = await Helpers.CountMessagesAsync(
+                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.None }));
+                var deadLetter = await Helpers.CountMessagesAsync(
+                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.DeadLetter }));
+                return (Active: active, DeadLetter: deadLetter);
+            }));
+
+            long activeCount = 0;
+            long deadLetterCount = 0;
+            var activeIsExact = true;
+            var deadLetterIsExact = true;
+            foreach (var (active, deadLetter) in countResults)
+            {
+                activeCount += active.Count;
+                deadLetterCount += deadLetter.Count;
+                activeIsExact &= active.IsExact;
+                deadLetterIsExact &= deadLetter.IsExact;
             }
 
             var topicInfo = new TopicInfo(
                 item.Name,
                 EntityStatus.Active,
                 checked((int)Math.Min(activeCount, int.MaxValue)),
-                checked((int)Math.Min(deadLetterCount, int.MaxValue))
+                checked((int)Math.Min(deadLetterCount, int.MaxValue)),
+                ActiveMessageCountIsExact: activeIsExact,
+                DeadLetterMessageCountIsExact: deadLetterIsExact
             );
 
             topics.Add(topicInfo);
