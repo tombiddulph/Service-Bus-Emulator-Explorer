@@ -35,7 +35,9 @@ public record QueueInfo(
     long? MaxDeliveryCount = null,
     string? LockDuration = null,
     string? DefaultTtl = null,
-    DateTimeOffset? CreatedAt = null
+    DateTimeOffset? CreatedAt = null,
+    bool ActiveMessageCountIsExact = true,
+    bool DeadLetterMessageCountIsExact = true
 );
 
 public record TopicInfo(
@@ -44,7 +46,9 @@ public record TopicInfo(
     int ActiveMessageCount,
     int DeadLetterMessageCount,
     int? ScheduledMessageCount = null,
-    DateTime? CreatedAt = null
+    DateTime? CreatedAt = null,
+    bool ActiveMessageCountIsExact = true,
+    bool DeadLetterMessageCountIsExact = true
 );
 
 public record SubscriptionInfo(
@@ -56,7 +60,9 @@ public record SubscriptionInfo(
     int? MaxDeliveryCount = null,
     string? LockDuration = null,
     string? DefaultTtl = null,
-    DateTime? CreatedAt = null
+    DateTime? CreatedAt = null,
+    bool ActiveMessageCountIsExact = true,
+    bool DeadLetterMessageCountIsExact = true
 );
 
 public record MessageInfo(
@@ -113,3 +119,5 @@ public record ReplayDlqRequest(
     Dictionary<string, object>? UserProperties = null,
     bool RemoveFromDlq = true
 );
+
+public record CountResult(int Count, List<string>? NotFound = null);

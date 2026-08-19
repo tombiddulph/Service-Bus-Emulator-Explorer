@@ -17,4 +17,5 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(CreateQueueRequest))]
 [JsonSerializable(typeof(BulkDlqDeleteRequest))]
 [JsonSerializable(typeof(ReplayDlqRequest))]
+[JsonSerializable(typeof(CountResult))]
 public partial class AppJsonContext : JsonSerializerContext;
