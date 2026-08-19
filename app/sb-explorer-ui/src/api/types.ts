@@ -5,6 +5,8 @@ export interface QueueInfo {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   createdAt?: string
   maxDeliveryCount?: number
@@ -17,6 +19,8 @@ export interface TopicInfo {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   createdAt?: string
 }
@@ -26,6 +30,8 @@ export interface SubscriptionInfo {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   maxDeliveryCount?: number
   lockDuration?: string
@@ -59,3 +65,8 @@ export type MessageScope =
   | { type: 'subscription'; topic: string; subscription: string }
 
 export type SendScope = MessageScope | { type: 'topic'; name: string }
+
+export interface CountResult {
+  count: number
+  notFound?: string[]
+}

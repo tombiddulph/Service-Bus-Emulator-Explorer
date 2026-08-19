@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient, dlqPath, messagePath, replayDlqPath } from './client'
 import type {
+  CountResult,
   MessageInfo,
   MessageScope,
   MessageState,
@@ -172,7 +173,8 @@ export const useBulkDlqDelete = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ scope, messageIds }: BulkDlqDeleteInput) => {
-      await apiClient.post(dlqPath(scope), { messageIds })
+      const res = await apiClient.post<CountResult>(dlqPath(scope), { messageIds })
+      return res.data
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['messages', scopeKey(variables.scope)] })
@@ -195,7 +197,8 @@ export const useReplayDlq = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ scope, messageIds, body, contentType, userProperties, removeFromDlq }: ReplayDlqInput) => {
-      await apiClient.post(replayDlqPath(scope), { messageIds, body, contentType, userProperties, removeFromDlq })
+      const res = await apiClient.post<CountResult>(replayDlqPath(scope), { messageIds, body, contentType, userProperties, removeFromDlq })
+      return res.data
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['messages', scopeKey(variables.scope)] })

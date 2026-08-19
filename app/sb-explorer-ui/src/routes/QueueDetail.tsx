@@ -71,6 +71,8 @@ const QueueDetail = () => {
         status={queue.status}
         activeCount={queue.activeMessageCount}
         deadLetterCount={queue.deadLetterMessageCount}
+        activeCountIsExact={queue.activeMessageCountIsExact}
+        deadLetterCountIsExact={queue.deadLetterMessageCountIsExact}
         onSend={() => setSendOpen(true)}
         onDelete={() => setDeleteOpen(true)}
       />
@@ -110,7 +112,25 @@ const QueueDetail = () => {
                 <Button
                   color="teal"
                   disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
-                  onClick={() => replayDlq.mutate({ scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq })}
+                  onClick={() =>
+                    replayDlq.mutate(
+                      { scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
+                      {
+                        onSuccess: (result) => {
+                          const notFoundCount = result.notFound?.length ?? 0
+                          notifications.show({
+                            title: 'DLQ replay complete',
+                            message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+                            color: notFoundCount ? 'yellow' : 'green',
+                          })
+                          setSelectedIds([])
+                        },
+                        onError: (error) => {
+                          notifications.show({ title: 'DLQ replay failed', message: error instanceof Error ? error.message : 'Unable to replay DLQ messages.', color: 'red' })
+                        },
+                      },
+                    )
+                  }
                 >
                   {selectedIds.length ? 'Replay selected' : 'Replay all'}
                 </Button>
@@ -121,8 +141,13 @@ const QueueDetail = () => {
                     bulkDelete.mutate(
                       { scope: { type: 'queue', name }, messageIds: selectedIds },
                       {
-                        onSuccess: () => {
-                          notifications.show({ title: 'DLQ cleared', message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`, color: 'green' })
+                        onSuccess: (result) => {
+                          const notFoundCount = result.notFound?.length ?? 0
+                          notifications.show({
+                            title: 'DLQ cleared',
+                            message: `Deleted ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+                            color: notFoundCount ? 'yellow' : 'green',
+                          })
                           setSelectedIds([])
                         },
                         onError: (error) => {
@@ -159,7 +184,15 @@ const QueueDetail = () => {
         editable={messageState === 'deadletter'}
         onSaveAndRequeue={(body, removeFromDlq) => {
           if (!inspectingMessage || !name) return
-          replayDlq.mutate({ scope: { type: 'queue', name }, messageIds: [inspectingMessage.messageId], body, removeFromDlq }, { onSuccess: () => setInspect(undefined) })
+          replayDlq.mutate(
+            { scope: { type: 'queue', name }, messageIds: [inspectingMessage.messageId], body, removeFromDlq },
+            {
+              onSuccess: () => setInspect(undefined),
+              onError: (error) => {
+                notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+              },
+            },
+          )
         }}
       />
 

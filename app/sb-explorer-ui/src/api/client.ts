@@ -337,8 +337,9 @@ const mockAdapter: AxiosAdapter = async (config) => {
   }
 
   if (useMockDlq && method === "post" && path?.includes("/deadletter/")) {
-    // bulk delete DLQ
-    return respond({}, config);
+    // bulk delete/replay DLQ; mock has no message store to check against, so nothing is ever "not found"
+    const payload = typeof data === "string" ? JSON.parse(data) : data;
+    return respond({ count: payload?.messageIds?.length ?? 0, notFound: [] }, config);
   }
 
   const { adapter, ...configWithoutAdapter } = config;

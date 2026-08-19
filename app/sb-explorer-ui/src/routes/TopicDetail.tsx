@@ -24,6 +24,7 @@ import {
 } from '../api/hooks'
 import type { MessageState, TopicInfo } from '../api/types'
 import StatusPill from '../components/StatusPill'
+import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../App'
 
 const TopicDetail = () => {
@@ -125,8 +126,16 @@ const TopicDetail = () => {
               <Table.Td>
                 <StatusPill status={s.status} />
               </Table.Td>
-              <Table.Td>{s.activeMessageCount ?? 0}</Table.Td>
-              <Table.Td>{s.deadLetterMessageCount ?? 0}</Table.Td>
+              <Table.Td>
+                <Tooltip label={messageCountTooltip(s.activeMessageCountIsExact)} disabled={s.activeMessageCountIsExact !== false}>
+                  <span>{formatMessageCount(s.activeMessageCount, s.activeMessageCountIsExact)}</span>
+                </Tooltip>
+              </Table.Td>
+              <Table.Td>
+                <Tooltip label={messageCountTooltip(s.deadLetterMessageCountIsExact)} disabled={s.deadLetterMessageCountIsExact !== false}>
+                  <span>{formatMessageCount(s.deadLetterMessageCount, s.deadLetterMessageCountIsExact)}</span>
+                </Tooltip>
+              </Table.Td>
               <Table.Td>
                 <Button variant="subtle" onClick={(e) => { e.stopPropagation(); navigate(`/topics/${name}/${s.name}`) }}>
                   Open
@@ -149,6 +158,8 @@ const TopicDetail = () => {
         status={showSubscriptionDetail ? sub!.status : topic.status}
         activeCount={showSubscriptionDetail ? sub!.activeMessageCount : topic.activeMessageCount}
         deadLetterCount={showSubscriptionDetail ? sub!.deadLetterMessageCount : topic.deadLetterMessageCount}
+        activeCountIsExact={showSubscriptionDetail ? sub!.activeMessageCountIsExact : topic.activeMessageCountIsExact}
+        deadLetterCountIsExact={showSubscriptionDetail ? sub!.deadLetterMessageCountIsExact : topic.deadLetterMessageCountIsExact}
         onSend={() => setSendOpen(true)}
         onDelete={() => (showSubscriptionDetail ? setDeleteSubOpen(true) : setDeleteTopicOpen(true))}
         onCreateSubscription={showSubscriptionDetail ? undefined : () => setCreateSubOpen(true)}
@@ -197,7 +208,25 @@ const TopicDetail = () => {
                 <Button
                   color="teal"
                   disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
-                  onClick={() => replayDlq.mutate({ scope: messageScope, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq })}
+                  onClick={() =>
+                    replayDlq.mutate(
+                      { scope: messageScope, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
+                      {
+                        onSuccess: (result) => {
+                          const notFoundCount = result.notFound?.length ?? 0
+                          notifications.show({
+                            title: 'DLQ replay complete',
+                            message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+                            color: notFoundCount ? 'yellow' : 'green',
+                          })
+                          setSelectedIds([])
+                        },
+                        onError: (error) => {
+                          notifications.show({ title: 'DLQ replay failed', message: error instanceof Error ? error.message : 'Unable to replay DLQ messages.', color: 'red' })
+                        },
+                      },
+                    )
+                  }
                 >
                   {selectedIds.length ? 'Replay selected' : 'Replay all'}
                 </Button>
@@ -208,8 +237,13 @@ const TopicDetail = () => {
                     bulkDelete.mutate(
                       { scope: { type: 'subscription', topic: name, subscription }, messageIds: selectedIds },
                       {
-                        onSuccess: () => {
-                          notifications.show({ title: 'DLQ cleared', message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`, color: 'green' })
+                        onSuccess: (result) => {
+                          const notFoundCount = result.notFound?.length ?? 0
+                          notifications.show({
+                            title: 'DLQ cleared',
+                            message: `Deleted ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+                            color: notFoundCount ? 'yellow' : 'green',
+                          })
                           setSelectedIds([])
                         },
                         onError: (error) => {
@@ -249,7 +283,15 @@ const TopicDetail = () => {
         editable={messageState === 'deadletter'}
         onSaveAndRequeue={(body, removeFromDlq) => {
           if (!inspectingMessage) return
-          replayDlq.mutate({ scope: messageScope, messageIds: [inspectingMessage.messageId], body, removeFromDlq }, { onSuccess: () => setInspect(undefined) })
+          replayDlq.mutate(
+            { scope: messageScope, messageIds: [inspectingMessage.messageId], body, removeFromDlq },
+            {
+              onSuccess: () => setInspect(undefined),
+              onError: (error) => {
+                notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+              },
+            },
+          )
         }}
       />
 
