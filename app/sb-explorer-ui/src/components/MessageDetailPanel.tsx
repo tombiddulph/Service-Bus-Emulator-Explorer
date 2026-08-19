@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, Divider, Group, Stack, Text, Textarea } from '@mantine/core'
+import { Button, Checkbox, Divider, Group, Stack, Text } from '@mantine/core'
 import Editor from '@monaco-editor/react'
 import type { MessageInfo } from '../api/types'
 import MessagePropertiesTable from './MessagePropertiesTable'
@@ -37,7 +37,6 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
       </Stack>
       <Divider my="sm" />
       {editable && !editing && <Button variant="light" onClick={() => setEditing(true)}>Edit</Button>}
-      {editable && editing && <Textarea label="Message body" minRows={8} value={editBody} onChange={(event) => setEditBody(event.currentTarget.value)} />}
       {editable && editing && (
         <Checkbox
           mt="sm"
@@ -50,9 +49,10 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
         <Editor
           height="100%"
           defaultLanguage="json"
-          value={bodyValue}
+          value={editing ? editBody : bodyValue}
+          onChange={(value) => setEditBody(value ?? '')}
           theme={monacoTheme}
-          options={{ readOnly: true, minimap: { enabled: false }, lineNumbers: 'off', wordWrap: 'on' }}
+          options={{ readOnly: !editing, minimap: { enabled: false }, lineNumbers: 'off', wordWrap: 'on' }}
         />
       </div>
 
@@ -60,6 +60,15 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
       <MessagePropertiesTable title="System properties" data={message?.systemProperties as Record<string, unknown> | undefined} />
       {editable && editing && (
         <Group justify="flex-end" mt="md">
+          <Button
+            variant="default"
+            onClick={() => {
+              setEditBody(bodyValue)
+              setEditing(false)
+            }}
+          >
+            Cancel
+          </Button>
           <Button onClick={() => onSaveAndRequeue?.(editBody, removeFromDlq)}>Save &amp; Requeue</Button>
         </Group>
       )}
@@ -68,3 +77,4 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
 }
 
 export default MessageDetailPanel
+
