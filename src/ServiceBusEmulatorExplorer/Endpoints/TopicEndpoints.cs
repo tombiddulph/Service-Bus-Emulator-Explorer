@@ -97,7 +97,7 @@ public static class TopicEndpoints
     private static async Task<IResult> DeleteTopic(string name, ServiceBusAdministrationClient client)
     {
         var exists = await client.GetTopicAsync(name);
-        if (exists is null)
+        if (exists.Value is null)
         {
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
         }
@@ -113,18 +113,21 @@ public static class TopicEndpoints
         ServiceBusAdministrationClient adminClient, ServiceBusClient client)
     {
         var exists = await adminClient.GetTopicAsync(topic);
-        if (exists is null)
+        if (exists.Value is null)
         {
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
         }
 
         var message = new ServiceBusMessage(request.Body)
         {
-            ContentType = request.ContentType
+            ContentType = request.ContentType,
+            SessionId = request.SessionId,
         };
 
-        foreach (var (key, value) in request.UserProperties ?? [])
+        foreach (var (key, element) in request.UserProperties ?? [])
         {
+            if (!Helpers.TryConvertApplicationProperty(element, out var value))
+                return Results.Problem($"Unsupported value for user property '{key}'.", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
             message.ApplicationProperties[key] = value;
         }
 

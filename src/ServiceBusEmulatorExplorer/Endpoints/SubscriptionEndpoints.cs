@@ -30,6 +30,11 @@ public static class SubscriptionEndpoints
             .WithSummary("Peek subscription messages")
             .Produces<PagedMessages>();
 
+        group.MapPost("/{sub}/purge", PurgeSubscriptionMessages)
+            .WithName("PurgeSubscriptionMessages")
+            .WithSummary("Purge active subscription messages")
+            .Produces(StatusCodes.Status200OK);
+
         return app;
     }
 
@@ -203,5 +208,18 @@ public static class SubscriptionEndpoints
         var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
 
         return Results.Ok(pagedMessages);
+    }
+
+    private static async Task<IResult> PurgeSubscriptionMessages(string topic, string sub, ServiceBusEndpointCache endpointCache)
+    {
+        var receiver = endpointCache.GetTopicReceiver(topic, sub, new ServiceBusReceiverOptions
+        {
+            SubQueue = SubQueue.None,
+            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
+        });
+
+        await Helpers.PurgeMessagesAsync(endpointCache, receiver);
+
+        return Results.Ok();
     }
 }

@@ -37,6 +37,11 @@ public static class QueueEndpoints
             .WithSummary("Send message to queue")
             .Produces(StatusCodes.Status200OK);
 
+        group.MapPost("/{name}/purge", PurgeQueueMessages)
+            .WithName("PurgeQueueMessages")
+            .WithSummary("Purge active queue messages")
+            .Produces(StatusCodes.Status200OK);
+
         return app;
     }
 
@@ -193,15 +198,31 @@ public static class QueueEndpoints
         {
             ContentType = request.ContentType,
             MessageId = Guid.NewGuid().ToString(),
+            SessionId = request.SessionId,
         };
 
-        foreach (var requestUserProperty in request.UserProperties ?? [])
+        foreach (var (key, element) in request.UserProperties ?? [])
         {
-            message.ApplicationProperties[requestUserProperty.Key] = requestUserProperty.Value.ToString();
+            if (!Helpers.TryConvertApplicationProperty(element, out var value))
+                return Results.Problem($"Unsupported value for user property '{key}'.", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
+            message.ApplicationProperties[key] = value;
         }
 
         var sender = endpointCache.GetSender(name);
         await sender.SendMessageAsync(message);
+
+        return Results.Ok();
+    }
+
+    private static async Task<IResult> PurgeQueueMessages(string name, ServiceBusEndpointCache endpointCache)
+    {
+        var receiver = endpointCache.GetReceiver(name, new ServiceBusReceiverOptions
+        {
+            SubQueue = SubQueue.None,
+            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
+        });
+
+        await Helpers.PurgeMessagesAsync(endpointCache, receiver);
 
         return Results.Ok();
     }
