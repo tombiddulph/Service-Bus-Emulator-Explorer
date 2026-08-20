@@ -2,6 +2,7 @@
 
 namespace ServiceBusEmulatorExplorer;
 
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(List<QueueInfo>))]
 [JsonSerializable(typeof(QueueInfo))]
 [JsonSerializable(typeof(TopicInfo))]
@@ -19,4 +20,5 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(ReplayDlqRequest))]
 [JsonSerializable(typeof(CountResult))]
 [JsonSerializable(typeof(ReplayDlqResult))]
+[JsonSerializable(typeof(PurgeResult))]
 public partial class AppJsonContext : JsonSerializerContext;

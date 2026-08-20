@@ -23,12 +23,12 @@ import {
   useTopics,
   useReplayDlq,
 } from '../api/hooks'
-import type { MessageState, ReplayDlqResult, TopicInfo } from '../api/types'
+import type { MessageScope, MessageState, ReplayDlqResult, TopicInfo } from '../api/types'
 import StatusPill from '../components/StatusPill'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../App'
 
-const TopicDetail = () => {
+const TopicDetailContent = () => {
   const { name, subscription } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
@@ -49,7 +49,7 @@ const TopicDetail = () => {
   const [createSubOpen, setCreateSubOpen] = useState(false)
   const [deleteTopicOpen, setDeleteTopicOpen] = useState(false)
   const [deleteSubOpen, setDeleteSubOpen] = useState(false)
-  const [purgeOpen, setPurgeOpen] = useState(false)
+  const [purgeTarget, setPurgeTarget] = useState<MessageScope>()
   const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messageScope = useMemo(
@@ -216,7 +216,7 @@ const TopicDetail = () => {
                 color="red"
                 variant="light"
                 disabled={purgeMessages.isPending || !sub?.activeMessageCount}
-                onClick={() => setPurgeOpen(true)}
+                onClick={() => setPurgeTarget(messageScope)}
               >
                 Purge active messages
               </Button>
@@ -377,23 +377,32 @@ const TopicDetail = () => {
       </ConfirmActionDialog>
 
       <ConfirmActionDialog
-        open={purgeOpen}
-        onOpenChange={setPurgeOpen}
-        title={`Purge active messages in ${subscription}?`}
+        open={!!purgeTarget}
+        onOpenChange={(open) => !open && !purgeMessages.isPending && setPurgeTarget(undefined)}
+        title={`Purge active messages in ${purgeTarget?.type === 'subscription' ? purgeTarget.subscription : subscription}?`}
         description="This permanently deletes every active (non-dead-lettered) message in the subscription."
       >
         <Group gap="xs" justify="flex-end">
-          <Button variant="default" onClick={() => setPurgeOpen(false)}>
+          <Button variant="default" disabled={purgeMessages.isPending} onClick={() => setPurgeTarget(undefined)}>
             Cancel
           </Button>
           <Button
             color="red"
+            disabled={!purgeTarget || purgeMessages.isPending}
+            loading={purgeMessages.isPending}
             onClick={() =>
-              purgeMessages.mutate(messageScope, {
-                onSuccess: () => {
-                  setPurgeOpen(false)
+              purgeTarget && purgeMessages.mutate(purgeTarget, {
+                onSuccess: (result) => {
+                  setPurgeTarget(undefined)
                   setSelectedIds([])
-                  notifications.show({ title: 'Subscription purged', message: `Removed all active messages from ${subscription}`, color: 'green' })
+                  const complete = result.status === 'Completed'
+                  notifications.show({
+                    title: complete ? 'Subscription purged' : 'Subscription purge incomplete',
+                    message: complete
+                      ? `Removed ${result.removedCount} active message${result.removedCount === 1 ? '' : 's'}.`
+                      : `${result.message ?? 'The purge did not complete.'} Removed ${result.removedCount} message${result.removedCount === 1 ? '' : 's'} before stopping.`,
+                    color: complete ? 'green' : result.removedCount ? 'yellow' : 'red',
+                  })
                 },
                 onError: (error) => {
                   notifications.show({ title: 'Purge failed', message: error instanceof Error ? error.message : 'Unable to purge messages.', color: 'red' })
@@ -407,6 +416,11 @@ const TopicDetail = () => {
       </ConfirmActionDialog>
     </Stack>
   )
+}
+
+const TopicDetail = () => {
+  const { name, subscription } = useParams()
+  return <TopicDetailContent key={`${name}/${subscription ?? ''}`} />
 }
 
 export default TopicDetail

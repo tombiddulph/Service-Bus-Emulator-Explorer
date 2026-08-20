@@ -27,6 +27,18 @@ public enum PeekMode
     Peek
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<PurgeStatus>))]
+public enum PurgeStatus
+{
+    Completed,
+    TimedOut,
+    Unauthorized,
+    Failed,
+    SessionRequired
+}
+
+public record PurgeResult(PurgeStatus Status, int RemovedCount, string? Message = null);
+
 public record QueueInfo(
     string Name,
     EntityStatus Status,

@@ -1,3 +1,4 @@
+using Azure;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 
@@ -33,7 +34,11 @@ public static class SubscriptionEndpoints
         group.MapPost("/{sub}/purge", PurgeSubscriptionMessages)
             .WithName("PurgeSubscriptionMessages")
             .WithSummary("Purge active subscription messages")
-            .Produces(StatusCodes.Status200OK);
+            .Produces<PurgeResult>()
+            .Produces<PurgeResult>(StatusCodes.Status403Forbidden)
+            .Produces<PurgeResult>(StatusCodes.Status408RequestTimeout)
+            .Produces<PurgeResult>(StatusCodes.Status409Conflict)
+            .Produces<PurgeResult>(StatusCodes.Status502BadGateway);
 
         return app;
     }
@@ -210,16 +215,49 @@ public static class SubscriptionEndpoints
         return Results.Ok(pagedMessages);
     }
 
-    private static async Task<IResult> PurgeSubscriptionMessages(string topic, string sub, ServiceBusEndpointCache endpointCache)
+    private static async Task<IResult> PurgeSubscriptionMessages(
+        string topic,
+        string sub,
+        ServiceBusAdministrationClient client,
+        ServiceBusEndpointCache endpointCache,
+        HttpContext httpContext)
     {
+        try
+        {
+            var subscription = await client.GetSubscriptionAsync(topic, sub, httpContext.RequestAborted);
+            if (subscription.Value.RequiresSession)
+            {
+                return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.SessionRequired, 0,
+                    "Purge is unavailable because this subscription requires sessions. Session-aware purge is not supported."));
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.Unauthorized, 0,
+                "The configured Service Bus credentials are not authorized to inspect this subscription."));
+        }
+        catch (RequestFailedException exception) when (exception.Status is 401 or 403)
+        {
+            return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.Unauthorized, 0,
+                "The configured Service Bus credentials are not authorized to inspect this subscription."));
+        }
+        catch (ServiceBusException exception) when (exception.InnerException is UnauthorizedAccessException)
+        {
+            return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.Unauthorized, 0,
+                "The configured Service Bus credentials are not authorized to inspect this subscription."));
+        }
+        catch (Exception)
+        {
+            // Some emulator builds do not expose entity properties. The receiver remains authoritative.
+        }
+
         var receiver = endpointCache.GetTopicReceiver(topic, sub, new ServiceBusReceiverOptions
         {
             SubQueue = SubQueue.None,
             ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
         });
 
-        await Helpers.PurgeMessagesAsync(endpointCache, receiver);
-
-        return Results.Ok();
+        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, cancellationToken: httpContext.RequestAborted);
+        return Helpers.PurgeHttpResult(result);
     }
 }

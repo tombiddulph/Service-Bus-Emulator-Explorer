@@ -87,3 +87,9 @@ export interface ReplayDlqResult {
   notFound?: string[]
   error?: string
 }
+
+export interface PurgeResult {
+  status: 'Completed' | 'TimedOut' | 'Unauthorized' | 'Failed' | 'SessionRequired'
+  removedCount: number
+  message?: string
+}

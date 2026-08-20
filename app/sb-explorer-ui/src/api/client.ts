@@ -4,6 +4,7 @@ import type {
   MessageScope,
   MessageState,
   PagedResult,
+  PurgeResult,
   QueueInfo,
   SendScope,
   SubscriptionInfo,
@@ -339,6 +340,28 @@ const mockAdapter: AxiosAdapter = async (config) => {
   if (useMockMessages && method === "post" && path?.includes("/messages")) {
     // treat as send; just ack
     return respond({}, config);
+  }
+
+  if (useMockMessages && method === "post" && path?.endsWith("/purge")) {
+    if (path.startsWith("/queues/")) {
+      const queueName = path.split("/")[2];
+      const key = `queue:${queueName}:active`;
+      const removedCount = mockData.messages[key]?.length ?? 0;
+      mockData.messages[key] = [];
+      const queue = mockData.queues.find((item) => item.name === queueName);
+      if (queue) queue.activeMessageCount = 0;
+      return respond<PurgeResult>({ status: "Completed", removedCount }, config);
+    }
+
+    const [, , topicName, , subscriptionName] = path.split("/");
+    const key = `subscription:${topicName}:${subscriptionName}:active`;
+    const removedCount = mockData.messages[key]?.length ?? 0;
+    mockData.messages[key] = [];
+    const subscription = mockData.subscriptions[topicName]?.find((item) => item.name === subscriptionName);
+    if (subscription) subscription.activeMessageCount = 0;
+    const topic = mockData.topics.find((item) => item.name === topicName);
+    if (topic) topic.activeMessageCount = (mockData.subscriptions[topicName] ?? []).reduce((total, item) => total + item.activeMessageCount, 0);
+    return respond<PurgeResult>({ status: "Completed", removedCount }, config);
   }
 
   if (useMockDlq && method === "post" && path?.includes("/deadletter/")) {

@@ -59,12 +59,15 @@ public static class Helpers
 
     // Drains every message off the given receiver (active or dead-letter) using ReceiveAndDelete,
     // for "purge all" style operations. Best-effort: whatever isn't drained before the timeout stays put.
-    public static async Task PurgeMessagesAsync(
+    public static async Task<PurgeResult> PurgeMessagesAsync(
         ServiceBusEndpointCache endpointCache,
         ServiceBusReceiver receiver,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
     {
-        using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30));
+        using var timeoutCts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30));
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, cancellationToken);
+        var removedCount = 0;
         try
         {
             await using var _ = await endpointCache.LockAsync(receiver, cts.Token);
@@ -78,13 +81,47 @@ public static class Helpers
 
                 if (batch.Count == 0)
                     break;
+
+                removedCount += batch.Count;
             }
+
+            return new PurgeResult(PurgeStatus.Completed, removedCount);
         }
-        catch (Exception)
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            // best-effort purge; the timeout/cancellation that ends the drain loop lands here too
+            return new PurgeResult(PurgeStatus.TimedOut, removedCount,
+                "The purge timed out before the receiver was fully drained. Some active messages may remain.");
+        }
+        catch (ServiceBusException exception) when (exception.Reason == ServiceBusFailureReason.ServiceTimeout)
+        {
+            return new PurgeResult(PurgeStatus.TimedOut, removedCount,
+                "Service Bus timed out before the receiver was fully drained. Some active messages may remain.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new PurgeResult(PurgeStatus.Unauthorized, removedCount,
+                "The configured Service Bus credentials are not authorized to receive and delete messages.");
+        }
+        catch (ServiceBusException exception) when (exception.InnerException is UnauthorizedAccessException)
+        {
+            return new PurgeResult(PurgeStatus.Unauthorized, removedCount,
+                "The configured Service Bus credentials are not authorized to receive and delete messages.");
+        }
+        catch (Exception exception)
+        {
+            return new PurgeResult(PurgeStatus.Failed, removedCount,
+                $"The purge stopped because the receiver failed: {exception.Message}");
         }
     }
+
+    public static IResult PurgeHttpResult(PurgeResult result) => result.Status switch
+    {
+        PurgeStatus.Completed => Results.Ok(result),
+        PurgeStatus.TimedOut => Results.Json(result, AppJsonContext.Default.PurgeResult, statusCode: StatusCodes.Status408RequestTimeout),
+        PurgeStatus.Unauthorized => Results.Json(result, AppJsonContext.Default.PurgeResult, statusCode: StatusCodes.Status403Forbidden),
+        PurgeStatus.SessionRequired => Results.Json(result, AppJsonContext.Default.PurgeResult, statusCode: StatusCodes.Status409Conflict),
+        _ => Results.Json(result, AppJsonContext.Default.PurgeResult, statusCode: StatusCodes.Status502BadGateway)
+    };
 
     // JsonElement values from request bodies can't be written directly as AMQP application properties;
     // convert to the closest supported CLR primitive and reject shapes that have no AMQP equivalent.

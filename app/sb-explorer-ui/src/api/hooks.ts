@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { apiClient, dlqPath, messagePath, purgePath, replayDlqPath } from './client'
 import type {
   CountResult,
@@ -6,6 +7,7 @@ import type {
   MessageScope,
   MessageState,
   PagedResult,
+  PurgeResult,
   QueueInfo,
   ReplayDlqResult,
   SendScope,
@@ -224,7 +226,15 @@ export const usePurgeMessages = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (scope: MessageScope) => {
-      await apiClient.post(purgePath(scope))
+      try {
+        const response = await apiClient.post<PurgeResult>(purgePath(scope), undefined, { timeout: 35000 })
+        return response.data
+      } catch (error) {
+        if (axios.isAxiosError<PurgeResult>(error) && error.response?.data?.status) {
+          return error.response.data
+        }
+        throw error
+      }
     },
     onSuccess: (_data, scope) => {
       qc.invalidateQueries({ queryKey: ['messages', scopeKey(scope)] })
