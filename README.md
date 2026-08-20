@@ -8,11 +8,12 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 
 ### Queue Management
 
-- **List and Create Queues**: View all queues with runtime properties (active/dead-letter message counts, size)
-- **Send Messages**: Send messages to queues with custom properties and content
+- **List and Create Queues**: View queues with active and dead-letter message counts
+- **Send Messages**: Send messages with custom properties, content types, and session IDs
 - **Peek Messages**: Preview messages in queues without consuming them
+- **Purge Active Messages**: Remove active messages with partial-result and timeout reporting
 - **Delete Queues**: Remove queues from the emulator
-- **Dead Letter Queue Management**: Bulk delete dead-letter messages
+- **Dead Letter Queue Management**: Replay, edit, or bulk delete dead-letter messages
 
 ### Topic & Subscription Management
 
@@ -20,19 +21,23 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 - **Send Messages to Topics**: Publish messages to topics for distribution to subscriptions
 - **Subscription Management**: Create and manage subscriptions on topics
 - **Peek Subscription Messages**: Preview messages in subscriptions
+- **Subscription Recovery**: Replay or delete subscription dead-letter messages
 - **Delete Topics/Subscriptions**: Clean up resources
 
 ### Message Operations
 
 - **Message Peeking**: View message content and properties without consuming
-- **Dead Letter Queue Support**: View and manage dead-letter messages for both queues and subscriptions
-- **Bulk Operations**: Bulk delete operations for dead-letter messages
-- **Message Editor**: In-browser editor for message content with syntax highlighting
+- **Dead Letter Queue Recovery**: Replay selected or all messages while preserving broker metadata
+- **Editable Replay**: Edit a message body and choose whether to remove the original from the DLQ
+- **Bulk Operations**: Purge active messages and delete dead-letter messages
+- **Message Editor**: Edit message content with Monaco syntax highlighting
 
 ### Developer Experience
 
 - **Modern React UI**: Built with React 19, Vite, and Fluent UI/Mantine components
 - **Real-time Updates**: Automatic refresh of entity statistics
+- **Environment Visibility**: Display the current application environment in the header
+- **Emulator-Aware Counts**: Show bounded count estimates when exact runtime counts are unavailable
 - **API Documentation**: OpenAPI/Scalar API documentation available
 - **Monaco Editor**: In-browser code editor for message content
 - **Observability**: Built-in OpenTelemetry support
@@ -41,7 +46,7 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 
 - Docker and Docker Compose
 - .NET 10.0 SDK (for local development)
-- Node.js 18+ and npm/yarn (for frontend development)
+- Node.js 24 and npm (for frontend development)
 
 ## 🛠️ Setup
 
@@ -66,7 +71,7 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 3. **Start the services**
 
    ```bash
-   docker-compose up
+   docker compose up
    ```
 
    This will start:
@@ -81,35 +86,18 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 
 ### Local Development Setup
 
+For the complete bundled frontend and backend workflow, including `.env` configuration, see [Run Locally With .env](RUN_LOCAL.md).
+
 #### Backend (.NET)
 
-1. **Navigate to the backend directory**
+Start the emulator dependencies, then run the backend from the repository root:
 
-   ```bash
-   cd src/ServiceBusEmulatorExplorer
-   ```
+```bash
+docker compose -f compose-services.yaml up -d
+dotnet run --project src/ServiceBusEmulatorExplorer
+```
 
-2. **Configure connection strings**
-
-   Update `appsettings.Development.json`:
-
-   ```json
-   {
-     "ServiceBus": {
-       "ConnectionString": "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;",
-       "AdministrationConnectionString": "Endpoint=sb://localhost:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;",
-       "RefreshIntervalMs": 5000
-     }
-   }
-   ```
-
-3. **Run the backend**
-
-   ```bash
-   dotnet run
-   ```
-
-   The API will be available at <http://localhost:5123>
+The API will be available at <http://localhost:5123>.
 
 #### Frontend (React)
 
@@ -122,7 +110,7 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 2. **Install dependencies**
 
    ```bash
-   npm install
+   npm ci
    ```
 
 3. **Run the development server**
@@ -180,6 +168,7 @@ Environment variables for the frontend (via `.env` or build scripts):
 - `DELETE /api/queues/{name}` - Delete a queue
 - `GET /api/queues/{name}/messages` - Peek messages in a queue
 - `POST /api/queues/{name}/messages` - Send message to a queue
+- `POST /api/queues/{name}/purge` - Purge active queue messages
 
 ### Topics
 
@@ -194,19 +183,25 @@ Environment variables for the frontend (via `.env` or build scripts):
 - `POST /api/topics/{topic}/subscriptions` - Create a subscription
 - `DELETE /api/topics/{topic}/subscriptions/{sub}` - Delete a subscription
 - `GET /api/topics/{topic}/subscriptions/{sub}/messages` - Peek subscription messages
+- `POST /api/topics/{topic}/subscriptions/{sub}/purge` - Purge active subscription messages
 
 ### Dead Letter
 
 - `POST /api/deadletter/queue/{name}/delete` - Bulk delete queue DLQ messages
+- `POST /api/deadletter/queue/{name}/replay` - Replay queue DLQ messages
 - `POST /api/deadletter/subscription/{topic}/{sub}/delete` - Bulk delete subscription DLQ messages
+- `POST /api/deadletter/subscription/{topic}/{sub}/replay` - Replay subscription DLQ messages
+
+### Application
+
+- `GET /api/environment` - Get the current host environment
 
 ## 🧪 Testing
 
-Run the test suite:
+Run the test suite from the repository root:
 
 ```bash
-cd test/ServiceBusEmulatorExplorer.Tests
-dotnet test
+dotnet test sb-explorer.slnx
 ```
 
 ## 🏗️ Project Structure
