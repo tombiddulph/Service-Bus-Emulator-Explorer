@@ -3,30 +3,31 @@ branches:
   main:
     regex: ^main$
     mode: ContinuousDeployment
-    tag: ''
+    label: ''
     increment: Patch
-    prevent-increment-of-merged-branch-version: true
+    prevent-increment:
+      of-merged-branch: true
     track-merge-target: false
     is-release-branch: true
   feature:
     regex: ^feature[/-]
     mode: ContinuousDeployment
-    tag: alpha
+    label: alpha
     increment: Inherit
   pull-request:
     regex: ^(pull|pull\-requests|pr)[/-]
     mode: ContinuousDeployment
-    tag: PullRequest
+    label: PullRequest
     increment: Inherit
   hotfix:
     regex: ^hotfix[/-]
     mode: ContinuousDeployment
-    tag: beta
+    label: beta
     increment: Patch
   release:
     regex: ^release[/-]
     mode: ContinuousDeployment
-    tag: rc
+    label: rc
     increment: None
     is-release-branch: true
 ignore:
