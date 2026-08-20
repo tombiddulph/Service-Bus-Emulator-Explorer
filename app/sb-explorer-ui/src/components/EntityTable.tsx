@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { ActionIcon, Button, Group, Paper, ScrollArea, Table, Text, Tooltip } from '@mantine/core'
 import { IconPlus, IconRefresh } from '@tabler/icons-react'
 import type { EntityStatus } from '../api/types'
+import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import StatusPill from './StatusPill'
 
 export interface EntityRow {
@@ -9,6 +10,8 @@ export interface EntityRow {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   createdAt?: string
 }
@@ -43,12 +46,20 @@ const columns: Column<EntityRow>[] = [
   {
     id: 'active',
     label: 'Active',
-    render: (item) => item.activeMessageCount ?? 0,
+    render: (item) => (
+      <Tooltip label={messageCountTooltip(item.activeMessageCountIsExact)} disabled={item.activeMessageCountIsExact !== false}>
+        <span>{formatMessageCount(item.activeMessageCount, item.activeMessageCountIsExact)}</span>
+      </Tooltip>
+    ),
   },
   {
     id: 'dlq',
     label: 'Dead-letter',
-    render: (item) => item.deadLetterMessageCount ?? 0,
+    render: (item) => (
+      <Tooltip label={messageCountTooltip(item.deadLetterMessageCountIsExact)} disabled={item.deadLetterMessageCountIsExact !== false}>
+        <span>{formatMessageCount(item.deadLetterMessageCount, item.deadLetterMessageCountIsExact)}</span>
+      </Tooltip>
+    ),
   },
   {
     id: 'scheduled',

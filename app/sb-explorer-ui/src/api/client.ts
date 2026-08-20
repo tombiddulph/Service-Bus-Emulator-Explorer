@@ -52,7 +52,7 @@ console.log("[SB-Explorer] Configuration:", {
   env: import.meta.env,
 });
 
-export const messagePath = (scope: SendScope) => {
+export const messagePath = (scope: MessageScope | SendScope) => {
   if (scope.type === "queue") return `/queues/${scope.name}/messages`;
   if (scope.type === "topic") return `/topics/${scope.name}/messages`;
   return `/topics/${scope.topic}/subscriptions/${scope.subscription}/messages`;
@@ -61,6 +61,16 @@ export const messagePath = (scope: SendScope) => {
 export const dlqPath = (scope: MessageScope) => {
   if (scope.type === "queue") return `/deadletter/queue/${scope.name}/delete`;
   return `/deadletter/subscription/${scope.topic}/${scope.subscription}/delete`;
+};
+
+export const replayDlqPath = (scope: MessageScope) => {
+  if (scope.type === "queue") return `/deadletter/queue/${scope.name}/replay`;
+  return `/deadletter/subscription/${scope.topic}/${scope.subscription}/replay`;
+};
+
+export const purgePath = (scope: MessageScope) => {
+  if (scope.type === "queue") return `/queues/${scope.name}/purge`;
+  return `/topics/${scope.topic}/subscriptions/${scope.subscription}/purge`;
 };
 
 const respond = <T>(data: T, config: AxiosRequestConfig) =>
@@ -224,6 +234,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
           createdAt: new Date().toISOString(),
         });
       }
+
       return respond({}, config);
     }
     if (method === "delete" && path?.startsWith("/queues/")) {
@@ -331,8 +342,9 @@ const mockAdapter: AxiosAdapter = async (config) => {
   }
 
   if (useMockDlq && method === "post" && path?.includes("/deadletter/")) {
-    // bulk delete DLQ
-    return respond({}, config);
+    // bulk delete/replay DLQ; mock has no message store to check against, so nothing is ever "not found"
+    const payload = typeof data === "string" ? JSON.parse(data) : data;
+    return respond({ count: payload?.messageIds?.length ?? 0, notFound: [] }, config);
   }
 
   const { adapter, ...configWithoutAdapter } = config;

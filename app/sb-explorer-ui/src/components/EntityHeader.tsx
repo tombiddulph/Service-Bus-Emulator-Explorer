@@ -1,6 +1,7 @@
 import { ActionIcon, Badge, Group, Paper, Title, Tooltip } from '@mantine/core'
 import { IconPlus, IconSend, IconTrash } from '@tabler/icons-react'
 import type { EntityStatus } from '../api/types'
+import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import StatusPill from './StatusPill'
 
 interface EntityHeaderProps {
@@ -9,6 +10,8 @@ interface EntityHeaderProps {
   status: EntityStatus
   activeCount?: number
   deadLetterCount?: number
+  activeCountIsExact?: boolean
+  deadLetterCountIsExact?: boolean
   onSend?: () => void
   onDelete?: () => void
   onCreateSubscription?: () => void
@@ -20,6 +23,8 @@ const EntityHeader = ({
   status,
   activeCount,
   deadLetterCount,
+  activeCountIsExact,
+  deadLetterCountIsExact,
   onSend,
   onDelete,
   onCreateSubscription,
@@ -35,14 +40,18 @@ const EntityHeader = ({
           </Badge>
           <Group gap={6} align="center">
             {activeCount !== undefined && (
-              <Badge variant="outline" color="gray" radius="sm">
-                Active: {activeCount}
-              </Badge>
+              <Tooltip label={messageCountTooltip(activeCountIsExact)} disabled={activeCountIsExact !== false}>
+                <Badge variant="outline" color="gray" radius="sm">
+                  Active: {formatMessageCount(activeCount, activeCountIsExact)}
+                </Badge>
+              </Tooltip>
             )}
             {deadLetterCount !== undefined && (
-              <Badge variant="outline" color="red" radius="sm">
-                DLQ: {deadLetterCount}
-              </Badge>
+              <Tooltip label={messageCountTooltip(deadLetterCountIsExact)} disabled={deadLetterCountIsExact !== false}>
+                <Badge variant="outline" color="red" radius="sm">
+                  DLQ: {formatMessageCount(deadLetterCount, deadLetterCountIsExact)}
+                </Badge>
+              </Tooltip>
             )}
           </Group>
         </Group>

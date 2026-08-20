@@ -33,7 +33,7 @@ public static class TopicEndpoints
         return app;
     }
 
-    private static async Task<IResult> ListTopics(ServiceBusAdministrationClient client)
+    private static async Task<IResult> ListTopics(ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache)
     {
         var topicsRuntimeProperties = client.GetTopicsRuntimePropertiesAsync();
         if (topicsRuntimeProperties is null)
@@ -45,14 +45,40 @@ public static class TopicEndpoints
 
         await foreach (var item in topicsRuntimeProperties)
         {
-            
-          
+            var subscriptionNames = new List<string>();
+            await foreach (var subscription in client.GetSubscriptionsRuntimePropertiesAsync(item.Name))
+            {
+                subscriptionNames.Add(subscription.SubscriptionName);
+            }
+
+            var countResults = await Task.WhenAll(subscriptionNames.Select(async subscriptionName =>
+            {
+                var active = await Helpers.CountMessagesAsync(
+                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.None }));
+                var deadLetter = await Helpers.CountMessagesAsync(
+                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.DeadLetter }));
+                return (Active: active, DeadLetter: deadLetter);
+            }));
+
+            long activeCount = 0;
+            long deadLetterCount = 0;
+            var activeIsExact = true;
+            var deadLetterIsExact = true;
+            foreach (var (active, deadLetter) in countResults)
+            {
+                activeCount += active.Count;
+                deadLetterCount += deadLetter.Count;
+                activeIsExact &= active.IsExact;
+                deadLetterIsExact &= deadLetter.IsExact;
+            }
 
             var topicInfo = new TopicInfo(
                 item.Name,
                 EntityStatus.Active,
-                0,
-                0
+                checked((int)Math.Min(activeCount, int.MaxValue)),
+                checked((int)Math.Min(deadLetterCount, int.MaxValue)),
+                ActiveMessageCountIsExact: activeIsExact,
+                DeadLetterMessageCountIsExact: deadLetterIsExact
             );
 
             topics.Add(topicInfo);
@@ -71,7 +97,7 @@ public static class TopicEndpoints
     private static async Task<IResult> DeleteTopic(string name, ServiceBusAdministrationClient client)
     {
         var exists = await client.GetTopicAsync(name);
-        if (exists is null)
+        if (exists.Value is null)
         {
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
         }
@@ -87,18 +113,21 @@ public static class TopicEndpoints
         ServiceBusAdministrationClient adminClient, ServiceBusClient client)
     {
         var exists = await adminClient.GetTopicAsync(topic);
-        if (exists is null)
+        if (exists.Value is null)
         {
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
         }
 
         var message = new ServiceBusMessage(request.Body)
         {
-            ContentType = request.ContentType
+            ContentType = request.ContentType,
+            SessionId = request.SessionId,
         };
 
-        foreach (var (key, value) in request.UserProperties ?? [])
+        foreach (var (key, element) in request.UserProperties ?? [])
         {
+            if (!Helpers.TryConvertApplicationProperty(element, out var value))
+                return Results.Problem($"Unsupported value for user property '{key}'.", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
             message.ApplicationProperties[key] = value;
         }
 

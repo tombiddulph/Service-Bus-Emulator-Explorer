@@ -5,6 +5,8 @@ export interface QueueInfo {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   createdAt?: string
   maxDeliveryCount?: number
@@ -17,6 +19,8 @@ export interface TopicInfo {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   createdAt?: string
 }
@@ -26,6 +30,8 @@ export interface SubscriptionInfo {
   status: EntityStatus
   activeMessageCount: number
   deadLetterMessageCount: number
+  activeMessageCountIsExact?: boolean
+  deadLetterMessageCountIsExact?: boolean
   scheduledMessageCount?: number
   maxDeliveryCount?: number
   lockDuration?: string
@@ -58,4 +64,11 @@ export type MessageScope =
   | { type: 'queue'; name: string }
   | { type: 'subscription'; topic: string; subscription: string }
 
-export type SendScope = MessageScope | { type: 'topic'; name: string }
+// Messages can only be sent to a queue or a topic (the broker fans a topic send out to its
+// subscriptions), never directly to a subscription.
+export type SendScope = { type: 'queue'; name: string } | { type: 'topic'; name: string }
+
+export interface CountResult {
+  count: number
+  notFound?: string[]
+}

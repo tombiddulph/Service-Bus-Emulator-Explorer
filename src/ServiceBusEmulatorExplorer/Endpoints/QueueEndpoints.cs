@@ -37,10 +37,17 @@ public static class QueueEndpoints
             .WithSummary("Send message to queue")
             .Produces(StatusCodes.Status200OK);
 
+        group.MapPost("/{name}/purge", PurgeQueueMessages)
+            .WithName("PurgeQueueMessages")
+            .WithSummary("Purge active queue messages")
+            .Produces(StatusCodes.Status200OK);
+
         return app;
     }
 
-    private static async Task<IResult> ListQueues([FromServices] ServiceBusAdministrationClient client)
+    private static async Task<IResult> ListQueues(
+        [FromServices] ServiceBusAdministrationClient client,
+        [FromServices] ServiceBusEndpointCache endpointCache)
     {
         var queuesRuntimeProperties = client.GetQueuesRuntimePropertiesAsync();
 
@@ -64,16 +71,26 @@ public static class QueueEndpoints
                 // Queue properties may not be available (e.g. emulator limitation)
             }
 
+            var activeCountTask = Helpers.CountMessagesAsync(
+                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+            var deadLetterCountTask = Helpers.CountMessagesAsync(
+                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+            await Task.WhenAll(activeCountTask, deadLetterCountTask);
+            var activeCount = activeCountTask.Result;
+            var deadLetterCount = deadLetterCountTask.Result;
+
             var queueInfo = new QueueInfo(
                 item.Name,
                 EntityStatus.Active,
-                item.ActiveMessageCount,
-                item.DeadLetterMessageCount,
+                activeCount.Count,
+                deadLetterCount.Count,
                 item.ScheduledMessageCount,
                 queueProps?.MaxDeliveryCount,
                 queueProps?.LockDuration.ToString(),
                 queueProps?.DefaultMessageTimeToLive.ToString(),
-                item.CreatedAt);
+                item.CreatedAt,
+                ActiveMessageCountIsExact: activeCount.IsExact,
+                DeadLetterMessageCountIsExact: deadLetterCount.IsExact);
 
             queues.Add(queueInfo);
         }
@@ -135,6 +152,8 @@ public static class QueueEndpoints
         IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
         try
         {
+            await using var _ = await endpointCache.LockAsync(receiver, cancellationTokenSource.Token);
+
             long fromSequenceNumber = 0;
             if (skip > 0)
             {
@@ -179,15 +198,31 @@ public static class QueueEndpoints
         {
             ContentType = request.ContentType,
             MessageId = Guid.NewGuid().ToString(),
+            SessionId = request.SessionId,
         };
 
-        foreach (var requestUserProperty in request.UserProperties ?? [])
+        foreach (var (key, element) in request.UserProperties ?? [])
         {
-            message.ApplicationProperties[requestUserProperty.Key] = requestUserProperty.Value.ToString();
+            if (!Helpers.TryConvertApplicationProperty(element, out var value))
+                return Results.Problem($"Unsupported value for user property '{key}'.", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
+            message.ApplicationProperties[key] = value;
         }
 
         var sender = endpointCache.GetSender(name);
         await sender.SendMessageAsync(message);
+
+        return Results.Ok();
+    }
+
+    private static async Task<IResult> PurgeQueueMessages(string name, ServiceBusEndpointCache endpointCache)
+    {
+        var receiver = endpointCache.GetReceiver(name, new ServiceBusReceiverOptions
+        {
+            SubQueue = SubQueue.None,
+            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
+        });
+
+        await Helpers.PurgeMessagesAsync(endpointCache, receiver);
 
         return Results.Ok();
     }

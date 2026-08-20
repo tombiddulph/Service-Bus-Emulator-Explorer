@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Button, Group, Loader, Stack, Text } from '@mantine/core'
+import { Button, Checkbox, Group, Loader, Stack, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import EntityHeader from '../components/EntityHeader'
 import EntityOverviewCard from '../components/EntityOverviewCard'
@@ -13,7 +13,9 @@ import {
   useBulkDlqDelete,
   useDeleteQueue,
   useMessages,
+  usePurgeMessages,
   useQueues,
+  useReplayDlq,
   useSendMessage,
 } from '../api/hooks'
 import type { MessageState, QueueInfo } from '../api/types'
@@ -34,6 +36,8 @@ const QueueDetail = () => {
   const [inspect, setInspect] = useState<string | undefined>()
   const [sendOpen, setSendOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [purgeOpen, setPurgeOpen] = useState(false)
+  const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messages = useMessages({
     scope: { type: 'queue', name: name ?? '' },
@@ -44,10 +48,21 @@ const QueueDetail = () => {
   })
 
   const bulkDelete = useBulkDlqDelete()
+  const replayDlq = useReplayDlq()
   const sendMessage = useSendMessage()
   const deleteQueue = useDeleteQueue()
+  const purgeMessages = usePurgeMessages()
 
   const inspectingMessage = messages.data?.items?.find((m: any) => m.messageId === inspect)
+
+  const handleReplaySuccess = (result: { count: number; notFound?: string[] }) => {
+    const notFoundCount = result.notFound?.length ?? 0
+    notifications.show({
+      title: 'DLQ replay complete',
+      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+      color: notFoundCount ? 'yellow' : 'green',
+    })
+  }
 
   const handleDelete = async () => {
     if (!name) return
@@ -68,6 +83,8 @@ const QueueDetail = () => {
         status={queue.status}
         activeCount={queue.activeMessageCount}
         deadLetterCount={queue.deadLetterMessageCount}
+        activeCountIsExact={queue.activeMessageCountIsExact}
+        deadLetterCountIsExact={queue.deadLetterMessageCountIsExact}
         onSend={() => setSendOpen(true)}
         onDelete={() => setDeleteOpen(true)}
       />
@@ -97,38 +114,67 @@ const QueueDetail = () => {
 
         <Group justify="space-between" align="center">
           <Text fw={600}>Messages</Text>
-            {messageState === 'deadletter' && (
+            {messageState === 'active' && (
               <Button
                 color="red"
-                disabled={selectedIds.length === 0 || bulkDelete.isPending}
-                onClick={() =>
-                  bulkDelete.mutate(
-                    {
-                      scope: { type: 'queue', name },
-                      messageIds: selectedIds,
-                    },
-                    {
-                      onSuccess: () => {
-                        notifications.show({
-                          title: 'DLQ cleared',
-                          message: `Deleted ${selectedIds.length} message${selectedIds.length === 1 ? '' : 's'}.`,
-                          color: 'green',
-                        })
-                        setSelectedIds([])
-                      },
-                      onError: (error) => {
-                        notifications.show({
-                          title: 'DLQ delete failed',
-                          message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.',
-                          color: 'red',
-                        })
-                      },
-                    },
-                  )
-                }
+                variant="light"
+                disabled={purgeMessages.isPending || !queue.activeMessageCount}
+                onClick={() => setPurgeOpen(true)}
               >
-                Delete selected DLQ
+                Purge active messages
               </Button>
+            )}
+            {messageState === 'deadletter' && (
+              <Group gap="xs">
+                <Checkbox
+                  label="Remove from DLQ"
+                  checked={removeFromDlq}
+                  onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
+                />
+                <Button
+                  color="teal"
+                  disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
+                  onClick={() =>
+                    replayDlq.mutate(
+                      { scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
+                      {
+                        onSuccess: (result) => {
+                          handleReplaySuccess(result)
+                          setSelectedIds([])
+                        },
+                        onError: (error) => {
+                          notifications.show({ title: 'DLQ replay failed', message: error instanceof Error ? error.message : 'Unable to replay DLQ messages.', color: 'red' })
+                        },
+                      },
+                    )
+                  }
+                >
+                  {selectedIds.length ? 'Replay selected' : 'Replay all'}
+                </Button>
+                <Button
+                  color="red"
+                  disabled={selectedIds.length === 0 || bulkDelete.isPending}
+                  onClick={() =>
+                    bulkDelete.mutate(
+                      { scope: { type: 'queue', name }, messageIds: selectedIds },
+                      {
+                        onSuccess: (result) => {
+                          const notFoundCount = result.notFound?.length ?? 0
+                          notifications.show({
+                            title: 'DLQ cleared',
+                            message: `Deleted ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+                            color: notFoundCount ? 'yellow' : 'green',
+                          })
+                          setSelectedIds([])
+                        },
+                        onError: (error) => {
+                          notifications.show({ title: 'DLQ delete failed', message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.', color: 'red' })
+                        },
+                      },
+                    )
+                  }
+                >Delete selected DLQ</Button>
+              </Group>
             )}
         </Group>
 
@@ -148,7 +194,32 @@ const QueueDetail = () => {
         />
       </Stack>
 
-      <MessageDetailPanel message={inspectingMessage} open={!!inspect} onOpenChange={(open) => !open && setInspect(undefined)} />
+      {inspectingMessage && (
+        <MessageDetailPanel
+          key={inspectingMessage.messageId}
+          message={inspectingMessage}
+          open={!!inspect}
+          onOpenChange={(open) => !open && setInspect(undefined)}
+          editable={messageState === 'deadletter'}
+          onSaveAndRequeue={(body, removeFromDlq) => {
+            if (!name) return
+            const messageId = inspectingMessage.messageId
+            replayDlq.mutate(
+              { scope: { type: 'queue', name }, messageIds: [messageId], body, removeFromDlq },
+              {
+                onSuccess: (result) => {
+                  handleReplaySuccess(result)
+                  setSelectedIds((ids) => ids.filter((id) => id !== messageId))
+                  setInspect(undefined)
+                },
+                onError: (error) => {
+                  notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+                },
+              },
+            )
+          }}
+        />
+      )}
 
       <SendMessageDialog
         open={sendOpen}
@@ -182,6 +253,39 @@ const QueueDetail = () => {
           </Button>
           <Button color="red" onClick={handleDelete}>
             Delete
+          </Button>
+        </Group>
+      </ConfirmActionDialog>
+
+      <ConfirmActionDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title={`Purge active messages in ${queue.name}?`}
+        description="This permanently deletes every active (non-dead-lettered) message in the queue."
+      >
+        <Group gap="xs" justify="flex-end">
+          <Button variant="default" onClick={() => setPurgeOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            onClick={() =>
+              purgeMessages.mutate(
+                { type: 'queue', name },
+                {
+                  onSuccess: () => {
+                    setPurgeOpen(false)
+                    setSelectedIds([])
+                    notifications.show({ title: 'Queue purged', message: `Removed all active messages from ${name}`, color: 'green' })
+                  },
+                  onError: (error) => {
+                    notifications.show({ title: 'Purge failed', message: error instanceof Error ? error.message : 'Unable to purge messages.', color: 'red' })
+                  },
+                },
+              )
+            }
+          >
+            Purge
           </Button>
         </Group>
       </ConfirmActionDialog>

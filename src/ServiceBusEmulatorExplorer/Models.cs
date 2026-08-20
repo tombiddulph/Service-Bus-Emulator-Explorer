@@ -1,6 +1,9 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ServiceBusEmulatorExplorer;
+
+public record EnvironmentInfo(string Name);
 
 [JsonConverter(typeof(JsonStringEnumConverter<EntityStatus>))]
 public enum EntityStatus
@@ -33,7 +36,9 @@ public record QueueInfo(
     long? MaxDeliveryCount = null,
     string? LockDuration = null,
     string? DefaultTtl = null,
-    DateTimeOffset? CreatedAt = null
+    DateTimeOffset? CreatedAt = null,
+    bool ActiveMessageCountIsExact = true,
+    bool DeadLetterMessageCountIsExact = true
 );
 
 public record TopicInfo(
@@ -42,7 +47,9 @@ public record TopicInfo(
     int ActiveMessageCount,
     int DeadLetterMessageCount,
     int? ScheduledMessageCount = null,
-    DateTime? CreatedAt = null
+    DateTime? CreatedAt = null,
+    bool ActiveMessageCountIsExact = true,
+    bool DeadLetterMessageCountIsExact = true
 );
 
 public record SubscriptionInfo(
@@ -54,7 +61,9 @@ public record SubscriptionInfo(
     int? MaxDeliveryCount = null,
     string? LockDuration = null,
     string? DefaultTtl = null,
-    DateTime? CreatedAt = null
+    DateTime? CreatedAt = null,
+    bool ActiveMessageCountIsExact = true,
+    bool DeadLetterMessageCountIsExact = true
 );
 
 public record MessageInfo(
@@ -79,7 +88,8 @@ public record PagedMessages(
 public record SendMessageRequest(
     string Body,
     string? ContentType = null,
-    Dictionary<string, object>? UserProperties = null
+    Dictionary<string, JsonElement>? UserProperties = null,
+    string? SessionId = null
 );
 
 public record CreateQueueRequest(
@@ -103,3 +113,13 @@ public record CreateSubscriptionRequest(
 public record BulkDlqDeleteRequest(
     List<string>? MessageIds = null
 );
+
+public record ReplayDlqRequest(
+    List<string>? MessageIds = null,
+    string? Body = null,
+    string? ContentType = null,
+    Dictionary<string, JsonElement>? UserProperties = null,
+    bool RemoveFromDlq = true
+);
+
+public record CountResult(int Count, List<string>? NotFound = null);

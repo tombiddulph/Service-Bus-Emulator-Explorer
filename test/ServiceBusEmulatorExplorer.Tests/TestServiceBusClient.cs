@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Azure;
 using Azure.Core;
 using Azure.Messaging.ServiceBus;
@@ -13,6 +14,10 @@ public class TestServiceBusClient : ServiceBusClient
     private readonly Dictionary<string, TestServiceBusReceiver> _queueReceivers = [];
     private readonly Dictionary<string, TestServiceBusReceiver> _topicReceivers = [];
     private readonly Dictionary<string, TestServiceBusSender> _senders = [];
+    private readonly Dictionary<string, List<ServiceBusReceivedMessage>> _deadLetterMessages = [];
+
+    // Test hook: makes CompleteMessageAsync simulate a cancelled/timed-out settlement for this message id.
+    public string? FailCompleteForMessageId { get; set; }
 
 
     public override ServiceBusSender CreateSender(string queueOrTopicName)
@@ -28,7 +33,7 @@ public class TestServiceBusClient : ServiceBusClient
     public override ServiceBusReceiver CreateReceiver(string queueName,
         ServiceBusReceiverOptions receiverOptions = null)
     {
-        var receiver = new TestServiceBusReceiver(queueName, this);
+        var receiver = new TestServiceBusReceiver(queueName, this, receiverOptions?.SubQueue == SubQueue.DeadLetter);
         _queueReceivers[queueName] = receiver;
 
         return receiver;
@@ -38,12 +43,45 @@ public class TestServiceBusClient : ServiceBusClient
         ServiceBusReceiverOptions options)
     {
         var key = $"{topicName}/Subscriptions/{subscriptionName}";
-        var receiver = new TestServiceBusReceiver(key, this);
+        var receiver = new TestServiceBusReceiver(key, this, options.SubQueue == SubQueue.DeadLetter);
         _topicReceivers[key] = receiver;
 
         return receiver;
     }
 
+    public void AddDeadLetterMessage(string entityPath, string messageId, string body, string? contentType = null,
+        IDictionary<string, object>? applicationProperties = null, string? partitionKey = null, string? sessionId = null,
+        TimeSpan? timeToLive = null, string? correlationId = null, string? subject = null, string? replyTo = null)
+    {
+        if (!_deadLetterMessages.TryGetValue(entityPath, out var messages))
+        {
+            messages = [];
+            _deadLetterMessages[entityPath] = messages;
+        }
+
+        var message = ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: BinaryData.FromString(body),
+            messageId: messageId,
+            partitionKey: partitionKey,
+            sessionId: sessionId,
+            timeToLive: timeToLive ?? TimeSpan.FromMinutes(5),
+            correlationId: correlationId,
+            subject: subject,
+            contentType: contentType,
+            replyTo: replyTo,
+            properties: applicationProperties,
+            sequenceNumber: messages.Count + 1);
+
+        messages.Add(message);
+    }
+
+    public IReadOnlyList<ServiceBusMessage> GetSentMessages(string entityPath) =>
+        _senders.GetValueOrDefault(entityPath)?.Messages ?? [];
+
+    public IReadOnlyList<ServiceBusReceivedMessage> GetDeadLetterMessages(string entityPath) =>
+        _deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
+
+    public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private class TestServiceBusSender(string entityPath) : ServiceBusSender
     {
@@ -57,31 +95,142 @@ public class TestServiceBusClient : ServiceBusClient
             Messages.Add(message);
             return Task.CompletedTask;
         }
+
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client) : ServiceBusReceiver
+    public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver) : ServiceBusReceiver
     {
+        private readonly HashSet<long> _locked = [];
+
         public override string EntityPath => entityPath;
 
+        private List<ServiceBusReceivedMessage> DeadLetterMessages =>
+            client._deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
 
         public override Task<IReadOnlyList<ServiceBusReceivedMessage>> PeekMessagesAsync(int maxMessages, long? fromSequenceNumber = null,
             CancellationToken cancellationToken = new())
         {
-            var sender = client._senders.GetValueOrDefault(entityPath) ?? throw new InvalidOperationException($"No sender found for entity path '{entityPath}'");
-            
+            // Peeking sees locked messages too, so this deliberately ignores _locked.
+            if (isDeadLetterReceiver)
+            {
+                var deadLettered = DeadLetterMessages
+                    .Where(m => m.SequenceNumber >= (fromSequenceNumber ?? 0))
+                    .Take(maxMessages)
+                    .ToList();
+
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(deadLettered);
+            }
+
+            var sender = client._senders.GetValueOrDefault(entityPath);
+            if (sender is null)
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+
             var messages = sender.Messages
                 .Skip((int)(fromSequenceNumber ?? 0))
                 .Take(maxMessages)
                 .Select(m => ServiceBusModelFactory.ServiceBusReceivedMessage(
                     body: m.Body,
                     messageId: m.MessageId,
+                    contentType: m.ContentType,
+                    sessionId: m.SessionId,
+                    properties: m.ApplicationProperties,
                     sequenceNumber: sender.Messages.IndexOf(m) + 1))
                 .ToList()
                 .AsReadOnly();
-            
-            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
 
+            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
         }
+
+        public override Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveMessagesAsync(int maxMessages,
+            TimeSpan? maxWaitTime = null, CancellationToken cancellationToken = new())
+        {
+            if (!isDeadLetterReceiver)
+            {
+                var sender = client._senders.GetValueOrDefault(entityPath);
+                if (sender is null)
+                    return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+
+                var activeMessages = sender.Messages
+                    .Take(maxMessages)
+                    .Select((message, index) => ServiceBusModelFactory.ServiceBusReceivedMessage(
+                        body: message.Body,
+                        messageId: message.MessageId,
+                        contentType: message.ContentType,
+                        sequenceNumber: index + 1))
+                    .ToList();
+
+                sender.Messages.RemoveRange(0, activeMessages.Count);
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(activeMessages);
+            }
+
+            var messages = DeadLetterMessages
+                .Where(m => !_locked.Contains(m.SequenceNumber))
+                .Take(maxMessages)
+                .ToList();
+
+            foreach (var message in messages)
+                _locked.Add(message.SequenceNumber);
+
+            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
+        }
+
+        public override Task CompleteMessageAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
+        {
+            if (message.MessageId == client.FailCompleteForMessageId)
+                throw new OperationCanceledException("Simulated settlement timeout");
+
+            client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(message);
+            _locked.Remove(message.SequenceNumber);
+            return Task.CompletedTask;
+        }
+
+        // Drains and removes every remaining message, simulating a ReceiveAndDelete purge loop.
+        public override async IAsyncEnumerable<ServiceBusReceivedMessage> ReceiveMessagesAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (isDeadLetterReceiver)
+            {
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var next = client._deadLetterMessages.GetValueOrDefault(entityPath)?.FirstOrDefault(m => !_locked.Contains(m.SequenceNumber));
+                    if (next is null) yield break;
+                    client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(next);
+                    yield return next;
+                    await Task.Yield();
+                }
+            }
+            else
+            {
+                var sender = client._senders.GetValueOrDefault(entityPath);
+                if (sender is null) yield break;
+
+                while (sender.Messages.Count > 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var m = sender.Messages[0];
+                    sender.Messages.RemoveAt(0);
+                    yield return ServiceBusModelFactory.ServiceBusReceivedMessage(
+                        body: m.Body,
+                        messageId: m.MessageId,
+                        contentType: m.ContentType,
+                        sessionId: m.SessionId,
+                        properties: m.ApplicationProperties,
+                        sequenceNumber: 1);
+                    await Task.Yield();
+                }
+            }
+        }
+
+        public override Task AbandonMessageAsync(ServiceBusReceivedMessage message,
+            IDictionary<string, object>? propertiesToModify = null, CancellationToken cancellationToken = new())
+        {
+            _locked.Remove(message.SequenceNumber);
+            return Task.CompletedTask;
+        }
+
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
 

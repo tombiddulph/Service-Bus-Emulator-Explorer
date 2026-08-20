@@ -1,30 +1,37 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Group, Modal, Stack, TextInput, Title } from '@mantine/core'
-import Editor from '@monaco-editor/react'
+import { useMemo, useState } from 'react'
+import { Button, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core'
+import MessageBodyEditor from '../MessageBodyEditor'
 import MessagePropertiesTable from '../MessagePropertiesTable'
 
 interface SendMessageDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSubmit: (payload: { body: string; contentType?: string; userProperties?: Record<string, unknown> }) => void
+  onSubmit: (payload: { body: string; contentType?: string; userProperties?: Record<string, unknown>; sessionId?: string }) => void
   theme: 'light' | 'dark'
 }
 
 const SendMessageDialog = ({ open, onOpenChange, onSubmit, theme }: SendMessageDialogProps) => {
   const [body, setBody] = useState('{}')
   const [contentType, setContentType] = useState('application/json')
+  const [sessionId, setSessionId] = useState('')
   const [userProps, setUserProps] = useState<Record<string, string>>({})
   const [kvKey, setKvKey] = useState('')
   const [kvValue, setKvValue] = useState('')
 
-  useEffect(() => {
+  // Reset fields the moment `open` flips to false, however it happened (Cancel, backdrop,
+  // Escape, or the parent closing after a successful send). Adjusting state during render
+  // (rather than in an effect) avoids the extra setState-in-effect render cascade.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (!open) {
       setBody('{}')
+      setSessionId('')
       setUserProps({})
       setKvKey('')
       setKvValue('')
     }
-  }, [open])
+  }
 
   const parsedUserProps = useMemo(() => {
     const entries = Object.entries(userProps)
@@ -54,30 +61,33 @@ const SendMessageDialog = ({ open, onOpenChange, onSubmit, theme }: SendMessageD
     if (contentType.includes('json')) {
       try {
         JSON.parse(body || '{}')
-      } catch (_err) {
-        alert('Body must be valid JSON')
+      } catch (err) {
+        // JSON.parse always throws a SyntaxError on invalid input.
+        alert(`Body must be valid JSON: ${(err as SyntaxError).message}`)
         return
       }
     }
-    onSubmit({ body, contentType, userProperties: parsedUserProps })
+    onSubmit({ body, contentType, userProperties: parsedUserProps, sessionId: sessionId || undefined })
   }
 
   return (
     <Modal opened={open} onClose={() => onOpenChange(false)} title={<Title order={4}>Send message</Title>} size="lg" centered>
       <Stack gap="sm">
         <TextInput label="Content type" value={contentType} onChange={(e) => setContentType(e.currentTarget.value)} />
+        <TextInput
+          label="Session ID"
+          description="Required for session-enabled queues/subscriptions"
+          value={sessionId}
+          onChange={(e) => setSessionId(e.currentTarget.value)}
+        />
         <Stack gap={4}>
-          <TextInput label="Body" value={body} onChange={(e) => setBody(e.currentTarget.value)} />
-          <div style={{ height: 260, border: '1px solid var(--mantine-color-gray-4)', borderRadius: 8, overflow: 'hidden', background: 'var(--mantine-color-body)' }}>
-            <Editor
-              height="100%"
-              defaultLanguage={contentType.includes('json') ? 'json' : 'plaintext'}
-              value={body}
-              onChange={(value) => setBody(value ?? '')}
-              theme={theme === 'dark' ? 'vs-dark' : 'vs'}
-              options={{ minimap: { enabled: false }, lineNumbers: 'off', wordWrap: 'on' }}
-            />
-          </div>
+          <Text size="sm" fw={500}>Body</Text>
+          <MessageBodyEditor
+            value={body}
+            onChange={setBody}
+            language={contentType.includes('json') ? 'json' : 'plaintext'}
+            theme={theme}
+          />
         </Stack>
 
         <Stack gap="xs">
