@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiClient, dlqPath, messagePath, replayDlqPath } from './client'
+import { apiClient, dlqPath, messagePath, purgePath, replayDlqPath } from './client'
 import type {
   CountResult,
   MessageInfo,
@@ -7,6 +7,7 @@ import type {
   MessageState,
   PagedResult,
   QueueInfo,
+  SendScope,
   SubscriptionInfo,
   TopicInfo,
 } from './types'
@@ -140,10 +141,11 @@ export const useDeleteSubscription = (topic: string) => {
 }
 
 interface SendMessageInput {
-  scope: MessageScope | { type: 'topic'; name: string }
+  scope: SendScope
   body: string
   contentType?: string
   userProperties?: Record<string, unknown>
+  sessionId?: string
 }
 
 export const useSendMessage = () => {
@@ -153,8 +155,16 @@ export const useSendMessage = () => {
       await apiClient.post(messagePath(scope), payload)
     },
     onSuccess: (_data, variables) => {
-      if (variables.scope.type === 'queue' || variables.scope.type === 'subscription') {
-        qc.invalidateQueries({ queryKey: ['messages', scopeKey(variables.scope)] })
+      if (variables.scope.type === 'queue') {
+        qc.invalidateQueries({ queryKey: ['messages', `queue:${variables.scope.name}`] })
+      } else {
+        // A topic send fans out to every subscription under it, so refresh them all.
+        qc.invalidateQueries({
+          predicate: (query) =>
+            query.queryKey[0] === 'messages' &&
+            typeof query.queryKey[1] === 'string' &&
+            query.queryKey[1].startsWith(`subscription:${variables.scope.name}:`),
+        })
       }
       // Refresh lists to reflect new counts
       qc.invalidateQueries({ queryKey: ['queues'] })
@@ -202,6 +212,21 @@ export const useReplayDlq = () => {
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['messages', scopeKey(variables.scope)] })
+      qc.invalidateQueries({ queryKey: ['subs'] })
+      qc.invalidateQueries({ queryKey: ['topics'] })
+      qc.invalidateQueries({ queryKey: ['queues'] })
+    },
+  })
+}
+
+export const usePurgeMessages = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (scope: MessageScope) => {
+      await apiClient.post(purgePath(scope))
+    },
+    onSuccess: (_data, scope) => {
+      qc.invalidateQueries({ queryKey: ['messages', scopeKey(scope)] })
       qc.invalidateQueries({ queryKey: ['subs'] })
       qc.invalidateQueries({ queryKey: ['topics'] })
       qc.invalidateQueries({ queryKey: ['queues'] })

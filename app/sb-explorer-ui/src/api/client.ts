@@ -52,7 +52,7 @@ console.log("[SB-Explorer] Configuration:", {
   env: import.meta.env,
 });
 
-export const messagePath = (scope: SendScope) => {
+export const messagePath = (scope: MessageScope | SendScope) => {
   if (scope.type === "queue") return `/queues/${scope.name}/messages`;
   if (scope.type === "topic") return `/topics/${scope.name}/messages`;
   return `/topics/${scope.topic}/subscriptions/${scope.subscription}/messages`;
@@ -66,6 +66,11 @@ export const dlqPath = (scope: MessageScope) => {
 export const replayDlqPath = (scope: MessageScope) => {
   if (scope.type === "queue") return `/deadletter/queue/${scope.name}/replay`;
   return `/deadletter/subscription/${scope.topic}/${scope.subscription}/replay`;
+};
+
+export const purgePath = (scope: MessageScope) => {
+  if (scope.type === "queue") return `/queues/${scope.name}/purge`;
+  return `/topics/${scope.topic}/subscriptions/${scope.subscription}/purge`;
 };
 
 const respond = <T>(data: T, config: AxiosRequestConfig) =>
