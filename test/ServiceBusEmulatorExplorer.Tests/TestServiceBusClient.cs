@@ -30,7 +30,7 @@ public class TestServiceBusClient : ServiceBusClient
     {
         if (!_senders.TryGetValue(entityPath, out var sender))
         {
-            sender = new TestServiceBusSender(entityPath);
+            sender = new TestServiceBusSender(entityPath, this);
             _senders[entityPath] = sender;
         }
 
