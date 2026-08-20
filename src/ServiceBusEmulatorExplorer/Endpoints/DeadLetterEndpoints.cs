@@ -197,6 +197,19 @@ public static class DeadLetterEndpoints
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var wanted = request.MessageIds is { Count: > 0 } ? request.MessageIds.ToHashSet(StringComparer.Ordinal) : null;
 
+        // Reject unsupported JSON property shapes before locking any messages.
+        Dictionary<string, object>? convertedUserProperties = null;
+        if (request.UserProperties is { Count: > 0 })
+        {
+            convertedUserProperties = new Dictionary<string, object>();
+            foreach (var (key, element) in request.UserProperties)
+            {
+                if (!Helpers.TryConvertApplicationProperty(element, out var value))
+                    return Results.Problem($"Unsupported value for user property '{key}'.", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
+                convertedUserProperties[key] = value!;
+            }
+        }
+
         var locked = new List<ServiceBusReceivedMessage>();
         var notFound = new HashSet<string>();
         var completed = new HashSet<long>();
@@ -226,27 +239,35 @@ public static class DeadLetterEndpoints
                 if (request.ContentType is not null)
                     replay.ContentType = request.ContentType;
 
-                if (request.UserProperties is not null)
+                if (convertedUserProperties is not null)
                 {
                     replay.ApplicationProperties.Clear();
                     replay.ApplicationProperties[ReplayedFromPropertyName] = message.MessageId;
-                    foreach (var property in request.UserProperties)
-                        replay.ApplicationProperties[property.Key] = property.Value;
+                    foreach (var (key, value) in convertedUserProperties)
+                        replay.ApplicationProperties[key] = value;
                 }
 
                 await sender.SendMessageAsync(replay, cts.Token);
-                replayed++;
 
                 if (request.RemoveFromDlq)
                 {
                     await receiver.CompleteMessageAsync(message, cts.Token);
                     completed.Add(message.SequenceNumber);
+                    replayed++;
+                }
+                else
+                {
+                    replayed++;
                 }
             }
         }
-        catch (Exception e)
+        catch (OperationCanceledException)
         {
-            Activity.Current?.AddException(e);
+            // Timed out mid-replay: report what actually completed instead of a false success.
+            return Results.Json(
+                new CountResult(replayed, notFound.Count > 0 ? notFound.ToList() : null),
+                AppJsonContext.Default.CountResult,
+                statusCode: StatusCodes.Status207MultiStatus);
         }
         finally
         {

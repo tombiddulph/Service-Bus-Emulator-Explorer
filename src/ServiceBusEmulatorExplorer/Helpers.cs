@@ -1,4 +1,5 @@
-﻿using Azure.Messaging.ServiceBus;
+﻿using System.Text.Json;
+using Azure.Messaging.ServiceBus;
 
 namespace ServiceBusEmulatorExplorer;
 
@@ -23,6 +24,8 @@ public static class Helpers
         {
             await using var _ = await endpointCache.LockAsync(receiver, cts.Token);
 
+            // maxMessages is only an upper bound, so a short batch does not imply exhaustion - keep
+            // going until an actually empty batch is returned.
             while (count < maxToCount)
             {
                 var batch = await receiver.PeekMessagesAsync(
@@ -35,17 +38,14 @@ public static class Helpers
 
                 count += batch.Count;
                 fromSequenceNumber = batch[^1].SequenceNumber + 1;
-
-                if (batch.Count < 100)
-                {
-                    break;
-                }
             }
 
-            // Loop exited because the cap was hit, not because the queue was exhausted - there may be more.
+            // Cap reached: probe one more message to know whether the queue is actually exhausted.
             if (count >= maxToCount)
             {
-                isExact = false;
+                var probe = await receiver.PeekMessagesAsync(
+                    maxMessages: 1, fromSequenceNumber: fromSequenceNumber, cancellationToken: cts.Token);
+                isExact = probe.Count == 0;
             }
         }
         catch (Exception)
@@ -55,6 +55,57 @@ public static class Helpers
         }
 
         return new MessageCountResult(count, isExact);
+    }
+
+    // Drains every message off the given receiver (active or dead-letter) using ReceiveAndDelete,
+    // for "purge all" style operations. Best-effort: whatever isn't drained before the timeout stays put.
+    public static async Task PurgeMessagesAsync(
+        ServiceBusEndpointCache endpointCache,
+        ServiceBusReceiver receiver,
+        TimeSpan? timeout = null)
+    {
+        using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30));
+        try
+        {
+            await using var _ = await endpointCache.LockAsync(receiver, cts.Token);
+
+            while (!cts.IsCancellationRequested)
+            {
+                var batch = await receiver.ReceiveMessagesAsync(
+                    maxMessages: 100,
+                    maxWaitTime: TimeSpan.FromSeconds(1),
+                    cancellationToken: cts.Token);
+
+                if (batch.Count == 0)
+                    break;
+            }
+        }
+        catch (Exception)
+        {
+            // best-effort purge; the timeout/cancellation that ends the drain loop lands here too
+        }
+    }
+
+    // JsonElement values from request bodies can't be written directly as AMQP application properties;
+    // convert to the closest supported CLR primitive and reject shapes that have no AMQP equivalent.
+    public static bool TryConvertApplicationProperty(JsonElement element, out object? value)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                value = element.GetString();
+                return true;
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                value = element.GetBoolean();
+                return true;
+            case JsonValueKind.Number:
+                value = element.TryGetInt64(out var longValue) ? longValue : element.GetDouble();
+                return true;
+            default:
+                value = null;
+                return false;
+        }
     }
 }
 

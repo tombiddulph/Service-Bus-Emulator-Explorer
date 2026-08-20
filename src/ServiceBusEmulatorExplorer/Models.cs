@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ServiceBusEmulatorExplorer;
@@ -87,7 +88,8 @@ public record PagedMessages(
 public record SendMessageRequest(
     string Body,
     string? ContentType = null,
-    Dictionary<string, object>? UserProperties = null
+    Dictionary<string, JsonElement>? UserProperties = null,
+    string? SessionId = null
 );
 
 public record CreateQueueRequest(
@@ -116,7 +118,7 @@ public record ReplayDlqRequest(
     List<string>? MessageIds = null,
     string? Body = null,
     string? ContentType = null,
-    Dictionary<string, object>? UserProperties = null,
+    Dictionary<string, JsonElement>? UserProperties = null,
     bool RemoveFromDlq = true
 );
 

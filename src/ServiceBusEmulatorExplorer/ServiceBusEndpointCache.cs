@@ -7,7 +7,10 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
 {
     private readonly ConcurrentDictionary<string, ServiceBusSender> _senders = new();
     private readonly ConcurrentDictionary<string, ServiceBusReceiver> _receivers = new();
-    private readonly ConcurrentDictionary<ServiceBusReceiver, SemaphoreSlim> _receiverLocks = new();
+    // Canonical entity+subqueue key per receiver, so operations against the same DLQ share a lock
+    // regardless of which receive mode (PeekLock vs ReceiveAndDelete) created the receiver instance.
+    private readonly ConcurrentDictionary<ServiceBusReceiver, string> _receiverOperationKeys = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _operationLocks = new();
 
     public ServiceBusSender GetSender(string queue) =>
         _senders.GetOrAdd(queue, client.CreateSender);
@@ -15,7 +18,9 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     public ServiceBusReceiver GetReceiver(string queue, ServiceBusReceiverOptions receiverOptions)
     {
         var key = $"{queue}-{receiverOptions.ReceiveMode}-{receiverOptions.SubQueue}";
-        return _receivers.GetOrAdd(key, _ => client.CreateReceiver(queue, receiverOptions));
+        var receiver = _receivers.GetOrAdd(key, _ => client.CreateReceiver(queue, receiverOptions));
+        _receiverOperationKeys.TryAdd(receiver, $"{queue}-{receiverOptions.SubQueue}");
+        return receiver;
     }
 
     public ServiceBusReceiver GetTopicReceiver(
@@ -25,7 +30,9 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     {
         var entityPath = $"{topic}/Subscriptions/{subscription}";
         var key = $"{entityPath}-{receiverOptions.ReceiveMode}-{receiverOptions.SubQueue}";
-        return _receivers.GetOrAdd(key, _ => client.CreateReceiver(topic, subscription, receiverOptions));
+        var receiver = _receivers.GetOrAdd(key, _ => client.CreateReceiver(topic, subscription, receiverOptions));
+        _receiverOperationKeys.TryAdd(receiver, $"{entityPath}-{receiverOptions.SubQueue}");
+        return receiver;
     }
 
     // Receivers are cached and shared across concurrent HTTP requests (e.g. the periodic message-list
@@ -33,7 +40,8 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     // Callers must hold this lock for the duration of any operation against a given receiver.
     public async Task<IAsyncDisposable> LockAsync(ServiceBusReceiver receiver, CancellationToken cancellationToken = default)
     {
-        var semaphore = _receiverLocks.GetOrAdd(receiver, _ => new SemaphoreSlim(1, 1));
+        var operationKey = _receiverOperationKeys.GetOrAdd(receiver, r => $"{r.EntityPath}");
+        var semaphore = _operationLocks.GetOrAdd(operationKey, _ => new SemaphoreSlim(1, 1));
         await semaphore.WaitAsync(cancellationToken);
         return new Releaser(semaphore);
     }
@@ -53,7 +61,7 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
             await sender.DisposeAsync();
         foreach (var receiver in _receivers.Values)
             await receiver.DisposeAsync();
-        foreach (var semaphore in _receiverLocks.Values)
+        foreach (var semaphore in _operationLocks.Values)
             semaphore.Dispose();
     }
 }
