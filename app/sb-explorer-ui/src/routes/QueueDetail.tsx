@@ -18,7 +18,7 @@ import {
   useReplayDlq,
   useSendMessage,
 } from '../api/hooks'
-import type { MessageState, QueueInfo } from '../api/types'
+import type { MessageState, QueueInfo, ReplayDlqResult } from '../api/types'
 import { useAppContext } from '../App'
 
 const QueueDetail = () => {
@@ -55,13 +55,14 @@ const QueueDetail = () => {
 
   const inspectingMessage = messages.data?.items?.find((m: any) => m.messageId === inspect)
 
-  const handleReplaySuccess = (result: { count: number; notFound?: string[] }) => {
-    const notFoundCount = result.notFound?.length ?? 0
+  const handleReplaySuccess = (result: ReplayDlqResult) => {
+    const failed = result.outcomes.filter((outcome) => outcome.error)
     notifications.show({
-      title: 'DLQ replay complete',
-      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
-      color: notFoundCount ? 'yellow' : 'green',
+      title: result.isPartial ? 'DLQ replay partially completed' : 'DLQ replay complete',
+      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${failed.length ? ` ${failed.length} message${failed.length === 1 ? '' : 's'} still require attention.` : ''}`,
+      color: result.isPartial ? 'yellow' : 'green',
     })
+    return failed.map((outcome) => outcome.messageId)
   }
 
   const handleDelete = async () => {
@@ -139,8 +140,7 @@ const QueueDetail = () => {
                       { scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
                       {
                         onSuccess: (result) => {
-                          handleReplaySuccess(result)
-                          setSelectedIds([])
+                          setSelectedIds(handleReplaySuccess(result))
                         },
                         onError: (error) => {
                           notifications.show({ title: 'DLQ replay failed', message: error instanceof Error ? error.message : 'Unable to replay DLQ messages.', color: 'red' })
@@ -208,9 +208,13 @@ const QueueDetail = () => {
               { scope: { type: 'queue', name }, messageIds: [messageId], body, removeFromDlq },
               {
                 onSuccess: (result) => {
-                  handleReplaySuccess(result)
-                  setSelectedIds((ids) => ids.filter((id) => id !== messageId))
-                  setInspect(undefined)
+                  const retryIds = handleReplaySuccess(result)
+                  if (!result.isPartial) {
+                    setSelectedIds((ids) => ids.filter((id) => id !== messageId))
+                    setInspect(undefined)
+                  } else {
+                    setSelectedIds(retryIds)
+                  }
                 },
                 onError: (error) => {
                   notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })

@@ -57,7 +57,7 @@ public class Tests : TestBase
         });
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
         await Assert.That(result).IsNotNull();
         await Assert.That(result!.Count).IsEqualTo(1);
         await Assert.That(result.NotFound).IsNull();
@@ -119,16 +119,81 @@ public class Tests : TestBase
 
         // Send succeeded but settlement was cancelled, so this is a partial result, not a 200.
         await Assert.That((int)response.StatusCode).IsEqualTo(207);
-        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
         await Assert.That(result).IsNotNull();
         // The count must only reflect messages that were actually completed, not just sent.
         await Assert.That(result!.Count).IsEqualTo(0);
+        await Assert.That(result.IsPartial).IsTrue();
+        await Assert.That(result.Outcomes).Count().IsEqualTo(1);
+        await Assert.That(result.Outcomes[0].Sent).IsTrue();
+        await Assert.That(result.Outcomes[0].RemovedFromDlq).IsFalse();
+        await Assert.That(result.Outcomes[0].Error).IsNotEmpty();
 
         var replayedMessage = serviceBusClient.GetSentMessages(queueName).Single();
         await Assert.That(replayedMessage.MessageId).IsNotEqualTo(messageId);
 
         // The original message was abandoned (not completed), so it's still in the DLQ.
         await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqHoldsEntityLockUntilIncompleteMessagesAreReleased()
+    {
+        const string queueName = "replay-concurrent-cleanup-queue";
+        const string messageId = "blocked-abandon-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "original body");
+        serviceBusClient.FailCompleteForMessageId = messageId;
+        serviceBusClient.BlockAbandonForMessageId = messageId;
+        var client = Factory.CreateClient();
+
+        var firstReplay = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+        await serviceBusClient.AbandonStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        serviceBusClient.FailCompleteForMessageId = null;
+        var secondReplay = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+
+        await Task.Delay(100);
+        await Assert.That(secondReplay.IsCompleted).IsFalse();
+
+        serviceBusClient.AllowAbandon.TrySetResult();
+        await Assert.That((int)(await firstReplay).StatusCode).IsEqualTo(207);
+        await Assert.That((await secondReplay).StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).IsEmpty();
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqRenewsLockDuringSlowSend()
+    {
+        const string queueName = "replay-lock-renewal-queue";
+        const string messageId = "slow-send-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.SimulatedLockDuration = TimeSpan.FromMilliseconds(100);
+        serviceBusClient.SendDelay = TimeSpan.FromMilliseconds(350);
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "original body");
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
+        await Assert.That(result).IsNotNull();
+        await Assert.That(result!.IsPartial).IsFalse();
+        await Assert.That(result.Outcomes.Single().RemovedFromDlq).IsTrue();
+        await Assert.That(serviceBusClient.RenewLockCallCount).IsGreaterThan(0);
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).IsEmpty();
     }
 
     [Test]

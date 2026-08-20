@@ -18,11 +18,17 @@ public class TestServiceBusClient : ServiceBusClient
 
     // Test hook: makes CompleteMessageAsync simulate a cancelled/timed-out settlement for this message id.
     public string? FailCompleteForMessageId { get; set; }
+    public string? BlockAbandonForMessageId { get; set; }
+    public TaskCompletionSource AbandonStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource AllowAbandon { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TimeSpan? SendDelay { get; set; }
+    public TimeSpan? SimulatedLockDuration { get; set; }
+    public int RenewLockCallCount { get; private set; }
 
 
     public override ServiceBusSender CreateSender(string queueOrTopicName)
     {
-        var sender = new TestServiceBusSender(queueOrTopicName);
+        var sender = new TestServiceBusSender(queueOrTopicName, this);
         _senders[queueOrTopicName] = sender;
 
         return sender;
@@ -70,7 +76,8 @@ public class TestServiceBusClient : ServiceBusClient
             contentType: contentType,
             replyTo: replyTo,
             properties: applicationProperties,
-            sequenceNumber: messages.Count + 1);
+            sequenceNumber: messages.Count + 1,
+            lockedUntil: SimulatedLockDuration is { } duration ? DateTimeOffset.UtcNow + duration : DateTimeOffset.UtcNow.AddMinutes(1));
 
         messages.Add(message);
     }
@@ -83,17 +90,18 @@ public class TestServiceBusClient : ServiceBusClient
 
     public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private class TestServiceBusSender(string entityPath) : ServiceBusSender
+    private class TestServiceBusSender(string entityPath, TestServiceBusClient client) : ServiceBusSender
     {
         public override string EntityPath => entityPath;
 
         internal List<ServiceBusMessage> Messages { get; } = [];
         
         
-        public override Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = new())
+        public override async Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = new())
         {
+            if (client.SendDelay is { } delay)
+                await Task.Delay(delay, cancellationToken);
             Messages.Add(message);
-            return Task.CompletedTask;
         }
 
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -102,6 +110,7 @@ public class TestServiceBusClient : ServiceBusClient
     public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver) : ServiceBusReceiver
     {
         private readonly HashSet<long> _locked = [];
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTimeOffset> _lockedUntil = [];
 
         public override string EntityPath => entityPath;
 
@@ -170,7 +179,10 @@ public class TestServiceBusClient : ServiceBusClient
                 .ToList();
 
             foreach (var message in messages)
+            {
                 _locked.Add(message.SequenceNumber);
+                _lockedUntil[message.SequenceNumber] = DateTimeOffset.UtcNow + (client.SimulatedLockDuration ?? TimeSpan.FromMinutes(1));
+            }
 
             return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
         }
@@ -179,9 +191,19 @@ public class TestServiceBusClient : ServiceBusClient
         {
             if (message.MessageId == client.FailCompleteForMessageId)
                 throw new OperationCanceledException("Simulated settlement timeout");
+            if (_lockedUntil.GetValueOrDefault(message.SequenceNumber) < DateTimeOffset.UtcNow)
+                throw new OperationCanceledException("Simulated message lock expired");
 
             client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(message);
             _locked.Remove(message.SequenceNumber);
+            return Task.CompletedTask;
+        }
+
+        public override Task RenewMessageLockAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _lockedUntil[message.SequenceNumber] = DateTimeOffset.UtcNow + (client.SimulatedLockDuration ?? TimeSpan.FromMinutes(1));
+            client.RenewLockCallCount++;
             return Task.CompletedTask;
         }
 
@@ -223,11 +245,16 @@ public class TestServiceBusClient : ServiceBusClient
             }
         }
 
-        public override Task AbandonMessageAsync(ServiceBusReceivedMessage message,
+        public override async Task AbandonMessageAsync(ServiceBusReceivedMessage message,
             IDictionary<string, object>? propertiesToModify = null, CancellationToken cancellationToken = new())
         {
+            if (message.MessageId == client.BlockAbandonForMessageId)
+            {
+                client.AbandonStarted.TrySetResult();
+                await client.AllowAbandon.Task;
+            }
             _locked.Remove(message.SequenceNumber);
-            return Task.CompletedTask;
+            _lockedUntil.TryRemove(message.SequenceNumber, out _);
         }
 
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using Azure.Messaging.ServiceBus;
 
 namespace ServiceBusEmulatorExplorer.Endpoints;
@@ -25,12 +26,14 @@ public static class DeadLetterEndpoints
         group.MapPost("/queue/{name}/replay", ReplayQueueDlq)
             .WithName("ReplayQueueDlq")
             .WithSummary("Replay queue DLQ messages")
-            .Produces(StatusCodes.Status200OK);
+            .Produces<ReplayDlqResult>(StatusCodes.Status200OK)
+            .Produces<ReplayDlqResult>(StatusCodes.Status207MultiStatus);
 
         group.MapPost("/subscription/{topic}/{sub}/replay", ReplaySubscriptionDlq)
             .WithName("ReplaySubscriptionDlq")
             .WithSummary("Replay subscription DLQ messages")
-            .Produces(StatusCodes.Status200OK);
+            .Produces<ReplayDlqResult>(StatusCodes.Status200OK)
+            .Produces<ReplayDlqResult>(StatusCodes.Status207MultiStatus);
 
         return app;
     }
@@ -164,6 +167,7 @@ public static class DeadLetterEndpoints
             fromSequenceNumber = batch[^1].SequenceNumber + 1;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return (needed, remaining ?? []);
     }
 
@@ -212,18 +216,31 @@ public static class DeadLetterEndpoints
 
         var locked = new List<ServiceBusReceivedMessage>();
         var notFound = new HashSet<string>();
-        var completed = new HashSet<long>();
+        var completed = new ConcurrentDictionary<long, byte>();
         var replayed = 0;
+        var outcomes = new List<ReplayMessageOutcome>();
+        var renewalFailures = new ConcurrentDictionary<long, string>();
+        string? operationError = null;
+        IAsyncDisposable? operationLock = null;
+        CancellationTokenSource? renewalCts = null;
+        Task? renewalTask = null;
 
         try
         {
-            await using var _ = await cache.LockAsync(receiver, cts.Token);
-
+            operationLock = await cache.LockAsync(receiver, cts.Token);
             (locked, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token);
+            renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+            renewalTask = RenewLocksAsync(receiver, locked, completed, renewalFailures, renewalCts.Token);
 
             foreach (var message in locked)
             {
                 if (wanted is not null && !wanted.Contains(message.MessageId)) continue;
+
+                if (renewalFailures.TryGetValue(message.SequenceNumber, out var renewalError))
+                {
+                    outcomes.Add(new(message.MessageId, false, false, renewalError));
+                    continue;
+                }
 
                 // Copy every standard property (Subject, CorrelationId, SessionId, ...) so subscription
                 // filters evaluate the replayed message the same way they did the original.
@@ -247,34 +264,139 @@ public static class DeadLetterEndpoints
                         replay.ApplicationProperties[key] = value;
                 }
 
-                await sender.SendMessageAsync(replay, cts.Token);
+                try
+                {
+                    await sender.SendMessageAsync(replay, cts.Token);
+                }
+                catch (Exception e) when (e is not OperationCanceledException || cts.IsCancellationRequested)
+                {
+                    Activity.Current?.AddException(e);
+                    outcomes.Add(new(message.MessageId, false, false,
+                        cts.IsCancellationRequested ? "Replay timed out before the message could be sent." : e.Message));
+                    if (cts.IsCancellationRequested) break;
+                    continue;
+                }
 
                 if (request.RemoveFromDlq)
                 {
-                    await receiver.CompleteMessageAsync(message, cts.Token);
-                    completed.Add(message.SequenceNumber);
-                    replayed++;
+                    try
+                    {
+                        await receiver.CompleteMessageAsync(message, cts.Token);
+                        completed.TryAdd(message.SequenceNumber, 0);
+                        replayed++;
+                        outcomes.Add(new(message.MessageId, true, true));
+                    }
+                    catch (Exception e)
+                    {
+                        Activity.Current?.AddException(e);
+                        outcomes.Add(new(message.MessageId, true, false,
+                            cts.IsCancellationRequested ? "Message was sent, but replay timed out before it could be removed from the DLQ." : e.Message));
+                        if (cts.IsCancellationRequested) break;
+                    }
                 }
                 else
                 {
                     replayed++;
+                    outcomes.Add(new(message.MessageId, true, false));
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            // Timed out mid-replay: report what actually completed instead of a false success.
-            return Results.Json(
-                new CountResult(replayed, notFound.Count > 0 ? notFound.ToList() : null),
-                AppJsonContext.Default.CountResult,
-                statusCode: StatusCodes.Status207MultiStatus);
+            operationError = "Replay timed out before all requested messages could be processed.";
+            // Outcomes for work that had not started are added below, alongside not-found messages.
         }
         finally
         {
-            await ReleaseAsync(receiver, locked.Where(message => !completed.Contains(message.SequenceNumber)));
+            if (renewalCts is not null)
+            {
+                await renewalCts.CancelAsync();
+                if (renewalTask is not null)
+                    try { await renewalTask; }
+                    catch (OperationCanceledException) { }
+                renewalCts.Dispose();
+            }
+
+            // Keep the canonical entity/subqueue lock until every unsettled broker lock is released.
+            await ReleaseAsync(receiver, locked.Where(message => !completed.ContainsKey(message.SequenceNumber)));
+            if (operationLock is not null)
+                await operationLock.DisposeAsync();
             await sender.DisposeAsync();
         }
 
-        return Results.Ok(new CountResult(replayed, notFound.Count > 0 ? notFound.ToList() : null));
+        var reported = outcomes.Select(outcome => outcome.MessageId).ToHashSet(StringComparer.Ordinal);
+        foreach (var message in locked.Where(message =>
+                     (wanted is null || wanted.Contains(message.MessageId)) && !reported.Contains(message.MessageId)))
+            outcomes.Add(new(message.MessageId, false, false, "Replay timed out before this message was processed."));
+
+        foreach (var messageId in notFound)
+            outcomes.Add(new(messageId, false, false, "Message was not found in the DLQ."));
+
+        if (operationError is not null && wanted is not null)
+            foreach (var messageId in wanted.Where(messageId => !reported.Contains(messageId) && !notFound.Contains(messageId)))
+                outcomes.Add(new(messageId, false, false, operationError));
+
+        var isPartial = operationError is not null || outcomes.Any(outcome => outcome.Error is not null);
+        var result = new ReplayDlqResult(replayed, isPartial, outcomes, notFound.Count > 0 ? notFound.ToList() : null, operationError);
+        return isPartial
+            ? Results.Json(result, AppJsonContext.Default.ReplayDlqResult, statusCode: StatusCodes.Status207MultiStatus)
+            : Results.Ok(result);
+    }
+
+    private static async Task RenewLocksAsync(
+        ServiceBusReceiver receiver,
+        IReadOnlyCollection<ServiceBusReceivedMessage> messages,
+        ConcurrentDictionary<long, byte> completed,
+        ConcurrentDictionary<long, string> failures,
+        CancellationToken cancellationToken)
+    {
+        var renewalIntervals = messages.ToDictionary(
+            message => message.SequenceNumber,
+            message => RenewalInterval(message.LockedUntil));
+        var nextRenewal = renewalIntervals.ToDictionary(
+            item => item.Key,
+            item => DateTimeOffset.UtcNow + item.Value);
+
+        while (nextRenewal.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var now = DateTimeOffset.UtcNow;
+
+            foreach (var message in messages.Where(message =>
+                         nextRenewal.TryGetValue(message.SequenceNumber, out var due) && due <= now))
+            {
+                if (completed.ContainsKey(message.SequenceNumber))
+                {
+                    nextRenewal.Remove(message.SequenceNumber);
+                    continue;
+                }
+
+                try
+                {
+                    await receiver.RenewMessageLockAsync(message, cancellationToken);
+                    nextRenewal[message.SequenceNumber] = DateTimeOffset.UtcNow + renewalIntervals[message.SequenceNumber];
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception e)
+                {
+                    Activity.Current?.AddException(e);
+                    failures.TryAdd(message.SequenceNumber, $"The DLQ message lock could not be renewed: {e.Message}");
+                    nextRenewal.Remove(message.SequenceNumber);
+                }
+            }
+
+            if (nextRenewal.Count == 0) break;
+            var delay = nextRenewal.Values.Min() - DateTimeOffset.UtcNow;
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Clamp(delay.TotalMilliseconds, 25, 1000)), cancellationToken);
+        }
+    }
+
+    private static TimeSpan RenewalInterval(DateTimeOffset lockedUntil)
+    {
+        var halfRemainingMs = (lockedUntil - DateTimeOffset.UtcNow).TotalMilliseconds / 2;
+        return TimeSpan.FromMilliseconds(Math.Clamp(halfRemainingMs, 25, 10000));
     }
 }
