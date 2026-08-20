@@ -85,12 +85,18 @@ public static class Helpers
                 removedCount += batch.Count;
             }
 
+            cts.Token.ThrowIfCancellationRequested();
             return new PurgeResult(PurgeStatus.Completed, removedCount);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             return new PurgeResult(PurgeStatus.TimedOut, removedCount,
                 "The purge timed out before the receiver was fully drained. Some active messages may remain.");
+        }
+        catch (OperationCanceledException)
+        {
+            return new PurgeResult(PurgeStatus.Failed, removedCount,
+                "The purge was cancelled before the receiver was fully drained. Some active messages may remain.");
         }
         catch (ServiceBusException exception) when (exception.Reason == ServiceBusFailureReason.ServiceTimeout)
         {

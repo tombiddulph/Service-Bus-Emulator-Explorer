@@ -119,7 +119,8 @@ public static class DeadLetterEndpoints
     private static async Task<(List<ServiceBusReceivedMessage> Locked, HashSet<string> NotFound)> LockDeadLetterMessagesAsync(
         ServiceBusReceiver receiver,
         HashSet<string>? wanted,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<IReadOnlyList<ServiceBusReceivedMessage>>? onLocked = null)
     {
         var (limit, notFound) = await CountMessagesToLockAsync(receiver, wanted, cancellationToken);
 
@@ -136,6 +137,7 @@ public static class DeadLetterEndpoints
             if (fresh.Count == 0) break;
 
             locked.AddRange(fresh);
+            onLocked?.Invoke(fresh);
         }
 
         return (locked, notFound);
@@ -224,13 +226,18 @@ public static class DeadLetterEndpoints
         IAsyncDisposable? operationLock = null;
         CancellationTokenSource? renewalCts = null;
         Task? renewalTask = null;
+        var renewing = new ConcurrentDictionary<long, ServiceBusReceivedMessage>();
 
         try
         {
             operationLock = await cache.LockAsync(receiver, cts.Token);
-            (locked, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token);
             renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
-            renewalTask = RenewLocksAsync(receiver, locked, completed, renewalFailures, renewalCts.Token);
+            renewalTask = RenewLocksAsync(receiver, renewing, completed, renewalFailures, renewalCts.Token);
+            (locked, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token, messages =>
+            {
+                foreach (var message in messages)
+                    renewing.TryAdd(message.SequenceNumber, message);
+            });
 
             foreach (var message in locked)
             {
@@ -324,17 +331,24 @@ public static class DeadLetterEndpoints
             await sender.DisposeAsync();
         }
 
-        var reported = outcomes.Select(outcome => outcome.MessageId).ToHashSet(StringComparer.Ordinal);
-        foreach (var message in locked.Where(message =>
-                     (wanted is null || wanted.Contains(message.MessageId)) && !reported.Contains(message.MessageId)))
-            outcomes.Add(new(message.MessageId, false, false, "Replay timed out before this message was processed."));
-
-        foreach (var messageId in notFound)
-            outcomes.Add(new(messageId, false, false, "Message was not found in the DLQ."));
-
-        if (operationError is not null && wanted is not null)
-            foreach (var messageId in wanted.Where(messageId => !reported.Contains(messageId) && !notFound.Contains(messageId)))
-                outcomes.Add(new(messageId, false, false, operationError));
+        if (wanted is null)
+        {
+            var reported = outcomes.Select(outcome => outcome.MessageId).ToHashSet(StringComparer.Ordinal);
+            foreach (var message in locked.Where(message => !reported.Contains(message.MessageId)))
+                outcomes.Add(new(message.MessageId, false, false, "Replay timed out before this message was processed."));
+        }
+        else
+        {
+            var reported = outcomes
+                .GroupBy(outcome => outcome.MessageId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            outcomes = wanted.Select(messageId => reported.GetValueOrDefault(messageId) ??
+                new ReplayMessageOutcome(messageId, false, false,
+                    notFound.Contains(messageId)
+                        ? "Message was not found in the DLQ."
+                        : operationError ?? "Message was visible in the DLQ but could not be locked for replay."))
+                .ToList();
+        }
 
         var isPartial = operationError is not null || outcomes.Any(outcome => outcome.Error is not null);
         var result = new ReplayDlqResult(replayed, isPartial, outcomes, notFound.Count > 0 ? notFound.ToList() : null, operationError);
@@ -345,29 +359,33 @@ public static class DeadLetterEndpoints
 
     private static async Task RenewLocksAsync(
         ServiceBusReceiver receiver,
-        IReadOnlyCollection<ServiceBusReceivedMessage> messages,
+        ConcurrentDictionary<long, ServiceBusReceivedMessage> messages,
         ConcurrentDictionary<long, byte> completed,
         ConcurrentDictionary<long, string> failures,
         CancellationToken cancellationToken)
     {
-        var renewalIntervals = messages.ToDictionary(
-            message => message.SequenceNumber,
-            message => RenewalInterval(message.LockedUntil));
-        var nextRenewal = renewalIntervals.ToDictionary(
-            item => item.Key,
-            item => DateTimeOffset.UtcNow + item.Value);
+        var renewalIntervals = new Dictionary<long, TimeSpan>();
+        var nextRenewal = new Dictionary<long, DateTimeOffset>();
 
-        while (nextRenewal.Count > 0)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var now = DateTimeOffset.UtcNow;
 
-            foreach (var message in messages.Where(message =>
+            foreach (var message in messages.Values.Where(message => !nextRenewal.ContainsKey(message.SequenceNumber)))
+            {
+                var interval = RenewalInterval(message.LockedUntil);
+                renewalIntervals[message.SequenceNumber] = interval;
+                nextRenewal[message.SequenceNumber] = now + interval;
+            }
+
+            foreach (var message in messages.Values.Where(message =>
                          nextRenewal.TryGetValue(message.SequenceNumber, out var due) && due <= now))
             {
                 if (completed.ContainsKey(message.SequenceNumber))
                 {
                     nextRenewal.Remove(message.SequenceNumber);
+                    messages.TryRemove(message.SequenceNumber, out _);
                     continue;
                 }
 
@@ -385,11 +403,13 @@ public static class DeadLetterEndpoints
                     Activity.Current?.AddException(e);
                     failures.TryAdd(message.SequenceNumber, $"The DLQ message lock could not be renewed: {e.Message}");
                     nextRenewal.Remove(message.SequenceNumber);
+                    messages.TryRemove(message.SequenceNumber, out _);
                 }
             }
 
-            if (nextRenewal.Count == 0) break;
-            var delay = nextRenewal.Values.Min() - DateTimeOffset.UtcNow;
+            var delay = nextRenewal.Count == 0
+                ? TimeSpan.FromMilliseconds(25)
+                : nextRenewal.Values.Min() - DateTimeOffset.UtcNow;
             await Task.Delay(TimeSpan.FromMilliseconds(Math.Clamp(delay.TotalMilliseconds, 25, 1000)), cancellationToken);
         }
     }

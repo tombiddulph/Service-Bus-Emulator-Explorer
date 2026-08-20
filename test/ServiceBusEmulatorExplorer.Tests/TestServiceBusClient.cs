@@ -25,6 +25,11 @@ public class TestServiceBusClient : ServiceBusClient
     public TimeSpan? SendDelay { get; set; }
     public TimeSpan? SimulatedLockDuration { get; set; }
     public int RenewLockCallCount { get; private set; }
+    public string? DisappearAfterPeekForMessageId { get; set; }
+    public string? ExternallyLockAfterPeekForMessageId { get; set; }
+    public int? DeadLetterReceiveBatchSize { get; set; }
+    public TimeSpan? DeadLetterReceiveDelayAfterFirstBatch { get; set; }
+    public Action<int>? ActiveBatchReceived { get; set; }
 
     public void AddActiveMessage(string entityPath, string messageId, string body)
     {
@@ -48,6 +53,9 @@ public class TestServiceBusClient : ServiceBusClient
 
     public override ServiceBusSender CreateSender(string queueOrTopicName)
     {
+        if (_senders.TryGetValue(queueOrTopicName, out var existing))
+            return existing;
+
         var sender = new TestServiceBusSender(queueOrTopicName, this);
         _senders[queueOrTopicName] = sender;
 
@@ -140,6 +148,7 @@ public class TestServiceBusClient : ServiceBusClient
     {
         private readonly HashSet<long> _locked = [];
         private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTimeOffset> _lockedUntil = [];
+        private int _deadLetterReceiveCalls;
 
         public override string EntityPath => entityPath;
 
@@ -156,6 +165,18 @@ public class TestServiceBusClient : ServiceBusClient
                     .Where(m => m.SequenceNumber >= (fromSequenceNumber ?? 0))
                     .Take(maxMessages)
                     .ToList();
+
+                if (client.DisappearAfterPeekForMessageId is { } disappearingId)
+                {
+                    DeadLetterMessages.RemoveAll(message => message.MessageId == disappearingId);
+                    client.DisappearAfterPeekForMessageId = null;
+                }
+                if (client.ExternallyLockAfterPeekForMessageId is { } lockedId)
+                {
+                    foreach (var message in DeadLetterMessages.Where(message => message.MessageId == lockedId))
+                        _locked.Add(message.SequenceNumber);
+                    client.ExternallyLockAfterPeekForMessageId = null;
+                }
 
                 return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(deadLettered);
             }
@@ -210,12 +231,17 @@ public class TestServiceBusClient : ServiceBusClient
                     .ToList();
 
                 sender.Messages.RemoveRange(0, activeMessages.Count);
+                client.ActiveBatchReceived?.Invoke(activeMessages.Count);
                 return activeMessages;
             }
 
+            _deadLetterReceiveCalls++;
+            if (_deadLetterReceiveCalls > 1 && client.DeadLetterReceiveDelayAfterFirstBatch is { } delay)
+                await Task.Delay(delay, cancellationToken);
+
             var messages = DeadLetterMessages
                 .Where(m => !_locked.Contains(m.SequenceNumber))
-                .Take(maxMessages)
+                .Take(Math.Min(maxMessages, client.DeadLetterReceiveBatchSize ?? maxMessages))
                 .ToList();
 
             foreach (var message in messages)
