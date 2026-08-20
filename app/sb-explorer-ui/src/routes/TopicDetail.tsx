@@ -17,6 +17,7 @@ import {
   useDeleteSubscription,
   useDeleteTopic,
   useMessages,
+  usePurgeMessages,
   useSendMessage,
   useSubscriptions,
   useTopics,
@@ -48,6 +49,7 @@ const TopicDetail = () => {
   const [createSubOpen, setCreateSubOpen] = useState(false)
   const [deleteTopicOpen, setDeleteTopicOpen] = useState(false)
   const [deleteSubOpen, setDeleteSubOpen] = useState(false)
+  const [purgeOpen, setPurgeOpen] = useState(false)
   const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messageScope = useMemo(
@@ -69,8 +71,18 @@ const TopicDetail = () => {
   const createSubscription = useCreateSubscription(name ?? '')
   const deleteSubscription = useDeleteSubscription(name ?? '')
   const deleteTopic = useDeleteTopic()
+  const purgeMessages = usePurgeMessages()
 
   const inspectingMessage = messages?.data?.items?.find((m) => m.messageId === inspect)
+
+  const handleReplaySuccess = (result: { count: number; notFound?: string[] }) => {
+    const notFoundCount = result.notFound?.length ?? 0
+    notifications.show({
+      title: 'DLQ replay complete',
+      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+      color: notFoundCount ? 'yellow' : 'green',
+    })
+  }
 
   const handleCreateSub = async (payload: { name: string; maxDeliveryCount?: number; lockDuration?: string; defaultTtl?: string }) => {
     await createSubscription.mutateAsync(payload)
@@ -198,6 +210,16 @@ const TopicDetail = () => {
                 </ActionIcon>
               </Tooltip>
             </Group>
+            {messageState === 'active' && (
+              <Button
+                color="red"
+                variant="light"
+                disabled={purgeMessages.isPending || !sub?.activeMessageCount}
+                onClick={() => setPurgeOpen(true)}
+              >
+                Purge active messages
+              </Button>
+            )}
             {messageState === 'deadletter' && (
               <Group gap="xs">
                 <Checkbox
@@ -213,12 +235,7 @@ const TopicDetail = () => {
                       { scope: messageScope, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
                       {
                         onSuccess: (result) => {
-                          const notFoundCount = result.notFound?.length ?? 0
-                          notifications.show({
-                            title: 'DLQ replay complete',
-                            message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
-                            color: notFoundCount ? 'yellow' : 'green',
-                          })
+                          handleReplaySuccess(result)
                           setSelectedIds([])
                         },
                         onError: (error) => {
@@ -276,24 +293,31 @@ const TopicDetail = () => {
         renderSubscriptionList()
       )}
 
-      <MessageDetailPanel
-        message={inspectingMessage}
-        open={!!inspect}
-        onOpenChange={(open) => !open && setInspect(undefined)}
-        editable={messageState === 'deadletter'}
-        onSaveAndRequeue={(body, removeFromDlq) => {
-          if (!inspectingMessage) return
-          replayDlq.mutate(
-            { scope: messageScope, messageIds: [inspectingMessage.messageId], body, removeFromDlq },
-            {
-              onSuccess: () => setInspect(undefined),
-              onError: (error) => {
-                notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+      {inspectingMessage && (
+        <MessageDetailPanel
+          key={inspectingMessage.messageId}
+          message={inspectingMessage}
+          open={!!inspect}
+          onOpenChange={(open) => !open && setInspect(undefined)}
+          editable={messageState === 'deadletter'}
+          onSaveAndRequeue={(body, removeFromDlq) => {
+            const messageId = inspectingMessage.messageId
+            replayDlq.mutate(
+              { scope: messageScope, messageIds: [messageId], body, removeFromDlq },
+              {
+                onSuccess: (result) => {
+                  handleReplaySuccess(result)
+                  setSelectedIds((ids) => ids.filter((id) => id !== messageId))
+                  setInspect(undefined)
+                },
+                onError: (error) => {
+                  notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+                },
               },
-            },
-          )
-        }}
-      />
+            )
+          }}
+        />
+      )}
 
       <SendMessageDialog
         open={sendOpen}
@@ -301,10 +325,9 @@ const TopicDetail = () => {
         theme={theme}
         onSubmit={(payload) =>
           sendMessage.mutate(
-            {
-              scope: showSubscriptionDetail ? { type: 'topic', name: topic.name } : { type: 'topic', name: topic.name },
-              ...payload,
-            },
+            // Sending always targets the topic - the broker fans it out to every subscription,
+            // including the one currently being viewed.
+            { scope: { type: 'topic', name: topic.name }, ...payload },
             {
               onSuccess: () => {
                 setSendOpen(false)
@@ -345,6 +368,36 @@ const TopicDetail = () => {
           </Button>
           <Button color="red" onClick={handleDeleteSub}>
             Delete
+          </Button>
+        </Group>
+      </ConfirmActionDialog>
+
+      <ConfirmActionDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title={`Purge active messages in ${subscription}?`}
+        description="This permanently deletes every active (non-dead-lettered) message in the subscription."
+      >
+        <Group gap="xs" justify="flex-end">
+          <Button variant="default" onClick={() => setPurgeOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            onClick={() =>
+              purgeMessages.mutate(messageScope, {
+                onSuccess: () => {
+                  setPurgeOpen(false)
+                  setSelectedIds([])
+                  notifications.show({ title: 'Subscription purged', message: `Removed all active messages from ${subscription}`, color: 'green' })
+                },
+                onError: (error) => {
+                  notifications.show({ title: 'Purge failed', message: error instanceof Error ? error.message : 'Unable to purge messages.', color: 'red' })
+                },
+              })
+            }
+          >
+            Purge
           </Button>
         </Group>
       </ConfirmActionDialog>

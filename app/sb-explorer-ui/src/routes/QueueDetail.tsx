@@ -13,6 +13,7 @@ import {
   useBulkDlqDelete,
   useDeleteQueue,
   useMessages,
+  usePurgeMessages,
   useQueues,
   useReplayDlq,
   useSendMessage,
@@ -35,6 +36,7 @@ const QueueDetail = () => {
   const [inspect, setInspect] = useState<string | undefined>()
   const [sendOpen, setSendOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [purgeOpen, setPurgeOpen] = useState(false)
   const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messages = useMessages({
@@ -49,8 +51,18 @@ const QueueDetail = () => {
   const replayDlq = useReplayDlq()
   const sendMessage = useSendMessage()
   const deleteQueue = useDeleteQueue()
+  const purgeMessages = usePurgeMessages()
 
   const inspectingMessage = messages.data?.items?.find((m: any) => m.messageId === inspect)
+
+  const handleReplaySuccess = (result: { count: number; notFound?: string[] }) => {
+    const notFoundCount = result.notFound?.length ?? 0
+    notifications.show({
+      title: 'DLQ replay complete',
+      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
+      color: notFoundCount ? 'yellow' : 'green',
+    })
+  }
 
   const handleDelete = async () => {
     if (!name) return
@@ -102,6 +114,16 @@ const QueueDetail = () => {
 
         <Group justify="space-between" align="center">
           <Text fw={600}>Messages</Text>
+            {messageState === 'active' && (
+              <Button
+                color="red"
+                variant="light"
+                disabled={purgeMessages.isPending || !queue.activeMessageCount}
+                onClick={() => setPurgeOpen(true)}
+              >
+                Purge active messages
+              </Button>
+            )}
             {messageState === 'deadletter' && (
               <Group gap="xs">
                 <Checkbox
@@ -117,12 +139,7 @@ const QueueDetail = () => {
                       { scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
                       {
                         onSuccess: (result) => {
-                          const notFoundCount = result.notFound?.length ?? 0
-                          notifications.show({
-                            title: 'DLQ replay complete',
-                            message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
-                            color: notFoundCount ? 'yellow' : 'green',
-                          })
+                          handleReplaySuccess(result)
                           setSelectedIds([])
                         },
                         onError: (error) => {
@@ -177,24 +194,32 @@ const QueueDetail = () => {
         />
       </Stack>
 
-      <MessageDetailPanel
-        message={inspectingMessage}
-        open={!!inspect}
-        onOpenChange={(open) => !open && setInspect(undefined)}
-        editable={messageState === 'deadletter'}
-        onSaveAndRequeue={(body, removeFromDlq) => {
-          if (!inspectingMessage || !name) return
-          replayDlq.mutate(
-            { scope: { type: 'queue', name }, messageIds: [inspectingMessage.messageId], body, removeFromDlq },
-            {
-              onSuccess: () => setInspect(undefined),
-              onError: (error) => {
-                notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+      {inspectingMessage && (
+        <MessageDetailPanel
+          key={inspectingMessage.messageId}
+          message={inspectingMessage}
+          open={!!inspect}
+          onOpenChange={(open) => !open && setInspect(undefined)}
+          editable={messageState === 'deadletter'}
+          onSaveAndRequeue={(body, removeFromDlq) => {
+            if (!name) return
+            const messageId = inspectingMessage.messageId
+            replayDlq.mutate(
+              { scope: { type: 'queue', name }, messageIds: [messageId], body, removeFromDlq },
+              {
+                onSuccess: (result) => {
+                  handleReplaySuccess(result)
+                  setSelectedIds((ids) => ids.filter((id) => id !== messageId))
+                  setInspect(undefined)
+                },
+                onError: (error) => {
+                  notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
+                },
               },
-            },
-          )
-        }}
-      />
+            )
+          }}
+        />
+      )}
 
       <SendMessageDialog
         open={sendOpen}
@@ -228,6 +253,39 @@ const QueueDetail = () => {
           </Button>
           <Button color="red" onClick={handleDelete}>
             Delete
+          </Button>
+        </Group>
+      </ConfirmActionDialog>
+
+      <ConfirmActionDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title={`Purge active messages in ${queue.name}?`}
+        description="This permanently deletes every active (non-dead-lettered) message in the queue."
+      >
+        <Group gap="xs" justify="flex-end">
+          <Button variant="default" onClick={() => setPurgeOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            onClick={() =>
+              purgeMessages.mutate(
+                { type: 'queue', name },
+                {
+                  onSuccess: () => {
+                    setPurgeOpen(false)
+                    setSelectedIds([])
+                    notifications.show({ title: 'Queue purged', message: `Removed all active messages from ${name}`, color: 'green' })
+                  },
+                  onError: (error) => {
+                    notifications.show({ title: 'Purge failed', message: error instanceof Error ? error.message : 'Unable to purge messages.', color: 'red' })
+                  },
+                },
+              )
+            }
+          >
+            Purge
           </Button>
         </Group>
       </ConfirmActionDialog>
