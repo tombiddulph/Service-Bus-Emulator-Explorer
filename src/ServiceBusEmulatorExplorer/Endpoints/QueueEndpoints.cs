@@ -40,7 +40,11 @@ public static class QueueEndpoints
         group.MapPost("/{name}/purge", PurgeQueueMessages)
             .WithName("PurgeQueueMessages")
             .WithSummary("Purge active queue messages")
-            .Produces(StatusCodes.Status200OK);
+            .Produces<PurgeResult>()
+            .Produces<PurgeResult>(StatusCodes.Status403Forbidden)
+            .Produces<PurgeResult>(StatusCodes.Status408RequestTimeout)
+            .Produces<PurgeResult>(StatusCodes.Status409Conflict)
+            .Produces<PurgeResult>(StatusCodes.Status502BadGateway);
 
         return app;
     }
@@ -214,16 +218,48 @@ public static class QueueEndpoints
         return Results.Ok();
     }
 
-    private static async Task<IResult> PurgeQueueMessages(string name, ServiceBusEndpointCache endpointCache)
+    private static async Task<IResult> PurgeQueueMessages(
+        string name,
+        ServiceBusAdministrationClient client,
+        ServiceBusEndpointCache endpointCache,
+        HttpContext httpContext)
     {
+        try
+        {
+            var queue = await client.GetQueueAsync(name, httpContext.RequestAborted);
+            if (queue.Value.RequiresSession)
+            {
+                return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.SessionRequired, 0,
+                    "Purge is unavailable because this queue requires sessions. Session-aware purge is not supported."));
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.Unauthorized, 0,
+                "The configured Service Bus credentials are not authorized to inspect this queue."));
+        }
+        catch (RequestFailedException exception) when (exception.Status is 401 or 403)
+        {
+            return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.Unauthorized, 0,
+                "The configured Service Bus credentials are not authorized to inspect this queue."));
+        }
+        catch (ServiceBusException exception) when (exception.InnerException is UnauthorizedAccessException)
+        {
+            return Helpers.PurgeHttpResult(new PurgeResult(PurgeStatus.Unauthorized, 0,
+                "The configured Service Bus credentials are not authorized to inspect this queue."));
+        }
+        catch (Exception)
+        {
+            // Some emulator builds do not expose entity properties. The receiver remains authoritative.
+        }
+
         var receiver = endpointCache.GetReceiver(name, new ServiceBusReceiverOptions
         {
             SubQueue = SubQueue.None,
             ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
         });
 
-        await Helpers.PurgeMessagesAsync(endpointCache, receiver);
-
-        return Results.Ok();
+        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, cancellationToken: httpContext.RequestAborted);
+        return Helpers.PurgeHttpResult(result);
     }
 }

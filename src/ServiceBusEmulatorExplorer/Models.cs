@@ -27,6 +27,18 @@ public enum PeekMode
     Peek
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<PurgeStatus>))]
+public enum PurgeStatus
+{
+    Completed,
+    TimedOut,
+    Unauthorized,
+    Failed,
+    SessionRequired
+}
+
+public record PurgeResult(PurgeStatus Status, int RemovedCount, string? Message = null);
+
 public record QueueInfo(
     string Name,
     EntityStatus Status,
@@ -123,3 +135,18 @@ public record ReplayDlqRequest(
 );
 
 public record CountResult(int Count, List<string>? NotFound = null);
+
+public record ReplayDlqResult(
+    int Count,
+    bool IsPartial,
+    List<ReplayMessageOutcome> Outcomes,
+    List<string>? NotFound = null,
+    string? Error = null
+);
+
+public record ReplayMessageOutcome(
+    string MessageId,
+    bool Sent,
+    bool RemovedFromDlq,
+    string? Error = null
+);

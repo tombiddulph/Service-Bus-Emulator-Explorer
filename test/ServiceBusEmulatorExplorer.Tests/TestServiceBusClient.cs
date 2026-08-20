@@ -15,14 +15,48 @@ public class TestServiceBusClient : ServiceBusClient
     private readonly Dictionary<string, TestServiceBusReceiver> _topicReceivers = [];
     private readonly Dictionary<string, TestServiceBusSender> _senders = [];
     private readonly Dictionary<string, List<ServiceBusReceivedMessage>> _deadLetterMessages = [];
+    private readonly Dictionary<string, PurgeReceiverBehavior> _purgeBehaviors = [];
 
     // Test hook: makes CompleteMessageAsync simulate a cancelled/timed-out settlement for this message id.
     public string? FailCompleteForMessageId { get; set; }
+    public string? BlockAbandonForMessageId { get; set; }
+    public TaskCompletionSource AbandonStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource AllowAbandon { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TimeSpan? SendDelay { get; set; }
+    public TimeSpan? SimulatedLockDuration { get; set; }
+    public int RenewLockCallCount { get; private set; }
+    public string? DisappearAfterPeekForMessageId { get; set; }
+    public string? ExternallyLockAfterPeekForMessageId { get; set; }
+    public int? DeadLetterReceiveBatchSize { get; set; }
+    public TimeSpan? DeadLetterReceiveDelayAfterFirstBatch { get; set; }
+    public Action<int>? ActiveBatchReceived { get; set; }
+
+    public void AddActiveMessage(string entityPath, string messageId, string body)
+    {
+        if (!_senders.TryGetValue(entityPath, out var sender))
+        {
+            sender = new TestServiceBusSender(entityPath, this);
+            _senders[entityPath] = sender;
+        }
+
+        sender.Messages.Add(new ServiceBusMessage(body) { MessageId = messageId });
+    }
+
+    public void ConfigurePurgeReceiver(
+        string entityPath,
+        int batchSize,
+        int? failAfterCalls = null,
+        TimeSpan? delay = null,
+        int delayAfterCalls = 0) =>
+        _purgeBehaviors[entityPath] = new PurgeReceiverBehavior(batchSize, failAfterCalls, delay, delayAfterCalls);
 
 
     public override ServiceBusSender CreateSender(string queueOrTopicName)
     {
-        var sender = new TestServiceBusSender(queueOrTopicName);
+        if (_senders.TryGetValue(queueOrTopicName, out var existing))
+            return existing;
+
+        var sender = new TestServiceBusSender(queueOrTopicName, this);
         _senders[queueOrTopicName] = sender;
 
         return sender;
@@ -70,7 +104,8 @@ public class TestServiceBusClient : ServiceBusClient
             contentType: contentType,
             replyTo: replyTo,
             properties: applicationProperties,
-            sequenceNumber: messages.Count + 1);
+            sequenceNumber: messages.Count + 1,
+            lockedUntil: SimulatedLockDuration is { } duration ? DateTimeOffset.UtcNow + duration : DateTimeOffset.UtcNow.AddMinutes(1));
 
         messages.Add(message);
     }
@@ -81,19 +116,29 @@ public class TestServiceBusClient : ServiceBusClient
     public IReadOnlyList<ServiceBusReceivedMessage> GetDeadLetterMessages(string entityPath) =>
         _deadLetterMessages.GetValueOrDefault(entityPath) ?? [];
 
+    private sealed record PurgeReceiverBehavior(
+        int BatchSize,
+        int? FailAfterCalls,
+        TimeSpan? Delay,
+        int DelayAfterCalls)
+    {
+        public int Calls { get; set; }
+    }
+
     public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private class TestServiceBusSender(string entityPath) : ServiceBusSender
+    private class TestServiceBusSender(string entityPath, TestServiceBusClient client) : ServiceBusSender
     {
         public override string EntityPath => entityPath;
 
         internal List<ServiceBusMessage> Messages { get; } = [];
         
         
-        public override Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = new())
+        public override async Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = new())
         {
+            if (client.SendDelay is { } delay)
+                await Task.Delay(delay, cancellationToken);
             Messages.Add(message);
-            return Task.CompletedTask;
         }
 
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -102,6 +147,8 @@ public class TestServiceBusClient : ServiceBusClient
     public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver) : ServiceBusReceiver
     {
         private readonly HashSet<long> _locked = [];
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTimeOffset> _lockedUntil = [];
+        private int _deadLetterReceiveCalls;
 
         public override string EntityPath => entityPath;
 
@@ -118,6 +165,18 @@ public class TestServiceBusClient : ServiceBusClient
                     .Where(m => m.SequenceNumber >= (fromSequenceNumber ?? 0))
                     .Take(maxMessages)
                     .ToList();
+
+                if (client.DisappearAfterPeekForMessageId is { } disappearingId)
+                {
+                    DeadLetterMessages.RemoveAll(message => message.MessageId == disappearingId);
+                    client.DisappearAfterPeekForMessageId = null;
+                }
+                if (client.ExternallyLockAfterPeekForMessageId is { } lockedId)
+                {
+                    foreach (var message in DeadLetterMessages.Where(message => message.MessageId == lockedId))
+                        _locked.Add(message.SequenceNumber);
+                    client.ExternallyLockAfterPeekForMessageId = null;
+                }
 
                 return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(deadLettered);
             }
@@ -142,14 +201,25 @@ public class TestServiceBusClient : ServiceBusClient
             return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
         }
 
-        public override Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveMessagesAsync(int maxMessages,
+        public override async Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveMessagesAsync(int maxMessages,
             TimeSpan? maxWaitTime = null, CancellationToken cancellationToken = new())
         {
             if (!isDeadLetterReceiver)
             {
+                var behavior = client._purgeBehaviors.GetValueOrDefault(entityPath);
+                if (behavior is not null)
+                {
+                    behavior.Calls++;
+                    if (behavior.FailAfterCalls is not null && behavior.Calls > behavior.FailAfterCalls)
+                        throw new ServiceBusException("Simulated receiver failure", ServiceBusFailureReason.ServiceCommunicationProblem);
+                    if (behavior.Delay is not null && behavior.Calls > behavior.DelayAfterCalls)
+                        await Task.Delay(behavior.Delay.Value, cancellationToken);
+                    maxMessages = Math.Min(maxMessages, behavior.BatchSize);
+                }
+
                 var sender = client._senders.GetValueOrDefault(entityPath);
                 if (sender is null)
-                    return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+                    return [];
 
                 var activeMessages = sender.Messages
                     .Take(maxMessages)
@@ -161,27 +231,45 @@ public class TestServiceBusClient : ServiceBusClient
                     .ToList();
 
                 sender.Messages.RemoveRange(0, activeMessages.Count);
-                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(activeMessages);
+                client.ActiveBatchReceived?.Invoke(activeMessages.Count);
+                return activeMessages;
             }
+
+            _deadLetterReceiveCalls++;
+            if (_deadLetterReceiveCalls > 1 && client.DeadLetterReceiveDelayAfterFirstBatch is { } delay)
+                await Task.Delay(delay, cancellationToken);
 
             var messages = DeadLetterMessages
                 .Where(m => !_locked.Contains(m.SequenceNumber))
-                .Take(maxMessages)
+                .Take(Math.Min(maxMessages, client.DeadLetterReceiveBatchSize ?? maxMessages))
                 .ToList();
 
             foreach (var message in messages)
+            {
                 _locked.Add(message.SequenceNumber);
+                _lockedUntil[message.SequenceNumber] = DateTimeOffset.UtcNow + (client.SimulatedLockDuration ?? TimeSpan.FromMinutes(1));
+            }
 
-            return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(messages);
+            return messages;
         }
 
         public override Task CompleteMessageAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
         {
             if (message.MessageId == client.FailCompleteForMessageId)
                 throw new OperationCanceledException("Simulated settlement timeout");
+            if (_lockedUntil.GetValueOrDefault(message.SequenceNumber) < DateTimeOffset.UtcNow)
+                throw new OperationCanceledException("Simulated message lock expired");
 
             client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(message);
             _locked.Remove(message.SequenceNumber);
+            return Task.CompletedTask;
+        }
+
+        public override Task RenewMessageLockAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _lockedUntil[message.SequenceNumber] = DateTimeOffset.UtcNow + (client.SimulatedLockDuration ?? TimeSpan.FromMinutes(1));
+            client.RenewLockCallCount++;
             return Task.CompletedTask;
         }
 
@@ -223,11 +311,16 @@ public class TestServiceBusClient : ServiceBusClient
             }
         }
 
-        public override Task AbandonMessageAsync(ServiceBusReceivedMessage message,
+        public override async Task AbandonMessageAsync(ServiceBusReceivedMessage message,
             IDictionary<string, object>? propertiesToModify = null, CancellationToken cancellationToken = new())
         {
+            if (message.MessageId == client.BlockAbandonForMessageId)
+            {
+                client.AbandonStarted.TrySetResult();
+                await client.AllowAbandon.Task;
+            }
             _locked.Remove(message.SequenceNumber);
-            return Task.CompletedTask;
+            _lockedUntil.TryRemove(message.SequenceNumber, out _);
         }
 
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -265,7 +358,8 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
             defaultMessageTimeToLive: TimeSpan.FromDays(14),
             autoDeleteOnIdle: TimeSpan.MaxValue,
             duplicateDetectionHistoryTimeWindow: TimeSpan.FromDays(1),
-            userMetadata:"");
+            userMetadata:"",
+            requiresSession: _queues[name].RequiresSession);
 
         return Task.FromResult(Response.FromValue(queueProperties, new TestResponse(200)));
     }
@@ -286,7 +380,8 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
             defaultMessageTimeToLive: options.DefaultMessageTimeToLive,
             autoDeleteOnIdle: TimeSpan.MaxValue,
             duplicateDetectionHistoryTimeWindow: TimeSpan.FromDays(1),
-            userMetadata:"");
+            userMetadata:"",
+            requiresSession: options.RequiresSession);
 
         _queues[options.Name] = options;
 
@@ -329,7 +424,8 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
             maxDeliveryCount: options.MaxDeliveryCount,
             defaultMessageTimeToLive: options.DefaultMessageTimeToLive,
             autoDeleteOnIdle: TimeSpan.MaxValue,
-            userMetadata: "");
+            userMetadata: "",
+            requiresSession: options.RequiresSession);
         
         _subscriptions[$"{options.TopicName}/Subscriptions/{options.SubscriptionName}"] = options;
         return Task.FromResult(Response.FromValue(subscriptionProperties, new TestResponse(201)));
@@ -365,7 +461,8 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
             defaultMessageTimeToLive: options.DefaultMessageTimeToLive,
             maxDeliveryCount: options.MaxDeliveryCount,
             autoDeleteOnIdle: TimeSpan.MaxValue,
-            userMetadata: "");
+            userMetadata: "",
+            requiresSession: options.RequiresSession);
         
         return Task.FromResult(Response.FromValue(subscriptionProperties, new TestResponse(200)));
     }

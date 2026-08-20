@@ -72,3 +72,24 @@ export interface CountResult {
   count: number
   notFound?: string[]
 }
+
+export interface ReplayMessageOutcome {
+  messageId: string
+  sent: boolean
+  removedFromDlq: boolean
+  error?: string
+}
+
+export interface ReplayDlqResult {
+  count: number
+  isPartial: boolean
+  outcomes: ReplayMessageOutcome[]
+  notFound?: string[]
+  error?: string
+}
+
+export interface PurgeResult {
+  status: 'Completed' | 'TimedOut' | 'Unauthorized' | 'Failed' | 'SessionRequired'
+  removedCount: number
+  message?: string
+}

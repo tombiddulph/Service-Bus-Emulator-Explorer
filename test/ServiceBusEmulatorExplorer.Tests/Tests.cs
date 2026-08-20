@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ServiceBusEmulatorExplorer.Tests;
@@ -57,7 +58,7 @@ public class Tests : TestBase
         });
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
         await Assert.That(result).IsNotNull();
         await Assert.That(result!.Count).IsEqualTo(1);
         await Assert.That(result.NotFound).IsNull();
@@ -119,16 +120,151 @@ public class Tests : TestBase
 
         // Send succeeded but settlement was cancelled, so this is a partial result, not a 200.
         await Assert.That((int)response.StatusCode).IsEqualTo(207);
-        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
         await Assert.That(result).IsNotNull();
         // The count must only reflect messages that were actually completed, not just sent.
         await Assert.That(result!.Count).IsEqualTo(0);
+        await Assert.That(result.IsPartial).IsTrue();
+        await Assert.That(result.Outcomes).Count().IsEqualTo(1);
+        await Assert.That(result.Outcomes[0].Sent).IsTrue();
+        await Assert.That(result.Outcomes[0].RemovedFromDlq).IsFalse();
+        await Assert.That(result.Outcomes[0].Error).IsNotEmpty();
 
         var replayedMessage = serviceBusClient.GetSentMessages(queueName).Single();
         await Assert.That(replayedMessage.MessageId).IsNotEqualTo(messageId);
 
         // The original message was abandoned (not completed), so it's still in the DLQ.
         await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqHoldsEntityLockUntilIncompleteMessagesAreReleased()
+    {
+        const string queueName = "replay-concurrent-cleanup-queue";
+        const string messageId = "blocked-abandon-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "original body");
+        serviceBusClient.FailCompleteForMessageId = messageId;
+        serviceBusClient.BlockAbandonForMessageId = messageId;
+        var client = Factory.CreateClient();
+
+        var firstReplay = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+        await serviceBusClient.AbandonStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        serviceBusClient.FailCompleteForMessageId = null;
+        var secondReplay = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+
+        await Task.Delay(100);
+        await Assert.That(secondReplay.IsCompleted).IsFalse();
+
+        serviceBusClient.AllowAbandon.TrySetResult();
+        await Assert.That((int)(await firstReplay).StatusCode).IsEqualTo(207);
+        await Assert.That((await secondReplay).StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).IsEmpty();
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqRenewsLockDuringSlowSend()
+    {
+        const string queueName = "replay-lock-renewal-queue";
+        const string messageId = "slow-send-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.SimulatedLockDuration = TimeSpan.FromMilliseconds(100);
+        serviceBusClient.SendDelay = TimeSpan.FromMilliseconds(350);
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "original body");
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
+        await Assert.That(result).IsNotNull();
+        await Assert.That(result!.IsPartial).IsFalse();
+        await Assert.That(result.Outcomes.Single().RemovedFromDlq).IsTrue();
+        await Assert.That(serviceBusClient.RenewLockCallCount).IsGreaterThan(0);
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).IsEmpty();
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqReportsRequestedMessageThatDisappearsAfterPeek()
+    {
+        const string queueName = "replay-disappearing-message-queue";
+        const string messageId = "disappearing-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "body");
+        serviceBusClient.DisappearAfterPeekForMessageId = messageId;
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId }
+        });
+
+        await Assert.That((int)response.StatusCode).IsEqualTo(207);
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
+        await Assert.That(result!.IsPartial).IsTrue();
+        await Assert.That(result.Outcomes).Count().IsEqualTo(1);
+        await Assert.That(result.Outcomes.Single().MessageId).IsEqualTo(messageId);
+        await Assert.That(result.Outcomes.Single().Sent).IsFalse();
+        await Assert.That(result.Outcomes.Single().Error).IsNotEmpty();
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqReportsRequestedMessageLockedByAnotherReceiverAfterPeek()
+    {
+        const string queueName = "replay-externally-locked-message-queue";
+        const string messageId = "externally-locked-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "body");
+        serviceBusClient.ExternallyLockAfterPeekForMessageId = messageId;
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId }
+        });
+
+        await Assert.That((int)response.StatusCode).IsEqualTo(207);
+        var result = await response.Content.ReadFromJsonAsync<ReplayDlqResult>();
+        await Assert.That(result!.IsPartial).IsTrue();
+        await Assert.That(result.Outcomes).Count().IsEqualTo(1);
+        await Assert.That(result.Outcomes.Single().MessageId).IsEqualTo(messageId);
+        await Assert.That(result.Outcomes.Single().Sent).IsFalse();
+        await Assert.That(result.Outcomes.Single().Error).IsNotEmpty();
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqRenewsEarlyLocksWhileAcquiringLargePrefix()
+    {
+        const string queueName = "replay-large-prefix-renewal-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.SimulatedLockDuration = TimeSpan.FromMilliseconds(100);
+        serviceBusClient.DeadLetterReceiveDelayAfterFirstBatch = TimeSpan.FromMilliseconds(350);
+        for (var i = 0; i < 101; i++)
+            serviceBusClient.AddDeadLetterMessage(queueName, $"message-{i}", "body");
+        var client = Factory.CreateClient();
+
+        var replay = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { "message-100" }
+        });
+
+        await Task.Delay(175);
+        await Assert.That(replay.IsCompleted).IsFalse();
+        await Assert.That(serviceBusClient.RenewLockCallCount).IsGreaterThan(0);
+        await Assert.That((await replay).StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -296,27 +432,130 @@ public class Tests : TestBase
         var response = await client.PostAsync($"/api/queues/{queueName}/purge", null);
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<PurgeResult>();
+        await Assert.That(result).IsNotNull();
+        await Assert.That(result!.Status).IsEqualTo(PurgeStatus.Completed);
+        await Assert.That(result.RemovedCount).IsEqualTo(2);
         await Assert.That(serviceBusClient.GetSentMessages(queueName)).IsEmpty();
         // Purge only targets active messages, DLQ is untouched.
         await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
     }
 
     [Test]
-    public async Task PurgeSubscriptionMessagesReturnsOk()
+    public async Task PurgeSubscriptionMessagesRemovesPopulatedSubscription()
     {
         const string topicName = "purge-topic";
         const string subscriptionName = "purge-subscription";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
         var client = Factory.CreateClient();
 
         await client.PostAsync("/api/topics", JsonContent.Create(new { name = topicName }));
+        await client.PostAsync($"/api/topics/{topicName}/subscriptions", JsonContent.Create(new { name = subscriptionName }));
+        var entityPath = $"{topicName}/Subscriptions/{subscriptionName}";
+        serviceBusClient.AddActiveMessage(entityPath, "sub-1", "first");
+        serviceBusClient.AddActiveMessage(entityPath, "sub-2", "second");
 
-        // The test double doesn't simulate topic->subscription fan-out (a real broker copies each
-        // send into every subscription), so this only exercises the purge endpoint's success path.
         var response = await client.PostAsync($"/api/topics/{topicName}/subscriptions/{subscriptionName}/purge", null);
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<PurgeResult>();
+        await Assert.That(result!.Status).IsEqualTo(PurgeStatus.Completed);
+        await Assert.That(result.RemovedCount).IsEqualTo(2);
+        await Assert.That(serviceBusClient.GetSentMessages(entityPath)).IsEmpty();
 
         await client.DeleteAsync($"/api/topics/{topicName}");
+    }
+
+    [Test]
+    public async Task PurgeReturnsPartialFailureWithRemovedCount()
+    {
+        const string queueName = "purge-partial-failure";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddActiveMessage(queueName, "one", "one");
+        serviceBusClient.AddActiveMessage(queueName, "two", "two");
+        serviceBusClient.AddActiveMessage(queueName, "three", "three");
+        serviceBusClient.ConfigurePurgeReceiver(queueName, batchSize: 1, failAfterCalls: 1);
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsync($"/api/queues/{queueName}/purge", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
+        var result = await response.Content.ReadFromJsonAsync<PurgeResult>();
+        await Assert.That(result!.Status).IsEqualTo(PurgeStatus.Failed);
+        await Assert.That(result.RemovedCount).IsEqualTo(1);
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task PurgeReportsPartialTimeout()
+    {
+        const string queueName = "purge-partial-timeout";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddActiveMessage(queueName, "one", "one");
+        serviceBusClient.AddActiveMessage(queueName, "two", "two");
+        serviceBusClient.ConfigurePurgeReceiver(queueName, batchSize: 1, delay: TimeSpan.FromSeconds(1), delayAfterCalls: 1);
+        var endpointCache = Factory.Services.GetRequiredService<ServiceBusEndpointCache>();
+        var receiver = endpointCache.GetReceiver(queueName, new ServiceBusReceiverOptions
+        {
+            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete
+        });
+
+        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, TimeSpan.FromMilliseconds(20));
+
+        await Assert.That(result.Status).IsEqualTo(PurgeStatus.TimedOut);
+        await Assert.That(result.RemovedCount).IsEqualTo(1);
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task PurgeDoesNotReportCompletedWhenCancelledBetweenBatches()
+    {
+        const string queueName = "purge-between-batches-cancellation";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddActiveMessage(queueName, "one", "one");
+        serviceBusClient.AddActiveMessage(queueName, "two", "two");
+        serviceBusClient.ConfigurePurgeReceiver(queueName, batchSize: 1);
+        using var cts = new CancellationTokenSource();
+        serviceBusClient.ActiveBatchReceived = _ => cts.Cancel();
+        var endpointCache = Factory.Services.GetRequiredService<ServiceBusEndpointCache>();
+        var receiver = endpointCache.GetReceiver(queueName, new ServiceBusReceiverOptions
+        {
+            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete
+        });
+
+        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, cancellationToken: cts.Token);
+
+        await Assert.That(result.Status).IsEqualTo(PurgeStatus.Failed);
+        await Assert.That(result.RemovedCount).IsEqualTo(1);
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CreateSenderPreservesExistingDestinationMessages()
+    {
+        const string queueName = "existing-sender-state-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddActiveMessage(queueName, "existing", "existing body");
+
+        await serviceBusClient.CreateSender(queueName).SendMessageAsync(new ServiceBusMessage("new body"));
+
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task PurgeRejectsSessionRequiredQueue()
+    {
+        const string queueName = "purge-session-queue";
+        var adminClient = (TestServiceBusAdministrationClient)Factory.Services.GetRequiredService<ServiceBusAdministrationClient>();
+        await adminClient.CreateQueueAsync(new CreateQueueOptions(queueName) { RequiresSession = true });
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsync($"/api/queues/{queueName}/purge", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        var result = await response.Content.ReadFromJsonAsync<PurgeResult>();
+        await Assert.That(result!.Status).IsEqualTo(PurgeStatus.SessionRequired);
+        await Assert.That(result.Message).Contains("requires sessions");
     }
 
     [Test]

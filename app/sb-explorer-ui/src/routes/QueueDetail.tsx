@@ -18,10 +18,11 @@ import {
   useReplayDlq,
   useSendMessage,
 } from '../api/hooks'
-import type { MessageState, QueueInfo } from '../api/types'
+import type { MessageScope, MessageState, QueueInfo, ReplayDlqResult } from '../api/types'
 import { useAppContext } from '../App'
+import { summarizeReplayResult } from '../utils/replayResult'
 
-const QueueDetail = () => {
+const QueueDetailContent = () => {
   const { name } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
@@ -36,7 +37,7 @@ const QueueDetail = () => {
   const [inspect, setInspect] = useState<string | undefined>()
   const [sendOpen, setSendOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [purgeOpen, setPurgeOpen] = useState(false)
+  const [purgeTarget, setPurgeTarget] = useState<MessageScope>()
   const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   const messages = useMessages({
@@ -55,13 +56,10 @@ const QueueDetail = () => {
 
   const inspectingMessage = messages.data?.items?.find((m: any) => m.messageId === inspect)
 
-  const handleReplaySuccess = (result: { count: number; notFound?: string[] }) => {
-    const notFoundCount = result.notFound?.length ?? 0
-    notifications.show({
-      title: 'DLQ replay complete',
-      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
-      color: notFoundCount ? 'yellow' : 'green',
-    })
+  const handleReplaySuccess = (result: ReplayDlqResult) => {
+    const summary = summarizeReplayResult(result)
+    notifications.show(summary)
+    return summary.retryIds
   }
 
   const handleDelete = async () => {
@@ -119,7 +117,7 @@ const QueueDetail = () => {
                 color="red"
                 variant="light"
                 disabled={purgeMessages.isPending || !queue.activeMessageCount}
-                onClick={() => setPurgeOpen(true)}
+                onClick={() => setPurgeTarget({ type: 'queue', name })}
               >
                 Purge active messages
               </Button>
@@ -139,8 +137,7 @@ const QueueDetail = () => {
                       { scope: { type: 'queue', name }, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
                       {
                         onSuccess: (result) => {
-                          handleReplaySuccess(result)
-                          setSelectedIds([])
+                          setSelectedIds(handleReplaySuccess(result))
                         },
                         onError: (error) => {
                           notifications.show({ title: 'DLQ replay failed', message: error instanceof Error ? error.message : 'Unable to replay DLQ messages.', color: 'red' })
@@ -208,9 +205,9 @@ const QueueDetail = () => {
               { scope: { type: 'queue', name }, messageIds: [messageId], body, removeFromDlq },
               {
                 onSuccess: (result) => {
-                  handleReplaySuccess(result)
-                  setSelectedIds((ids) => ids.filter((id) => id !== messageId))
-                  setInspect(undefined)
+                  const retryIds = handleReplaySuccess(result)
+                  setSelectedIds(retryIds)
+                  if (!retryIds.includes(messageId)) setInspect(undefined)
                 },
                 onError: (error) => {
                   notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
@@ -258,25 +255,34 @@ const QueueDetail = () => {
       </ConfirmActionDialog>
 
       <ConfirmActionDialog
-        open={purgeOpen}
-        onOpenChange={setPurgeOpen}
-        title={`Purge active messages in ${queue.name}?`}
+        open={!!purgeTarget}
+        onOpenChange={(open) => !open && !purgeMessages.isPending && setPurgeTarget(undefined)}
+        title={`Purge active messages in ${purgeTarget?.type === 'queue' ? purgeTarget.name : queue.name}?`}
         description="This permanently deletes every active (non-dead-lettered) message in the queue."
       >
         <Group gap="xs" justify="flex-end">
-          <Button variant="default" onClick={() => setPurgeOpen(false)}>
+          <Button variant="default" disabled={purgeMessages.isPending} onClick={() => setPurgeTarget(undefined)}>
             Cancel
           </Button>
           <Button
             color="red"
+            disabled={!purgeTarget || purgeMessages.isPending}
+            loading={purgeMessages.isPending}
             onClick={() =>
-              purgeMessages.mutate(
-                { type: 'queue', name },
+              purgeTarget && purgeMessages.mutate(
+                purgeTarget,
                 {
-                  onSuccess: () => {
-                    setPurgeOpen(false)
+                  onSuccess: (result) => {
+                    setPurgeTarget(undefined)
                     setSelectedIds([])
-                    notifications.show({ title: 'Queue purged', message: `Removed all active messages from ${name}`, color: 'green' })
+                    const complete = result.status === 'Completed'
+                    notifications.show({
+                      title: complete ? 'Queue purged' : 'Queue purge incomplete',
+                      message: complete
+                        ? `Removed ${result.removedCount} active message${result.removedCount === 1 ? '' : 's'}.`
+                        : `${result.message ?? 'The purge did not complete.'} Removed ${result.removedCount} message${result.removedCount === 1 ? '' : 's'} before stopping.`,
+                      color: complete ? 'green' : result.removedCount ? 'yellow' : 'red',
+                    })
                   },
                   onError: (error) => {
                     notifications.show({ title: 'Purge failed', message: error instanceof Error ? error.message : 'Unable to purge messages.', color: 'red' })
@@ -291,6 +297,11 @@ const QueueDetail = () => {
       </ConfirmActionDialog>
     </Stack>
   )
+}
+
+const QueueDetail = () => {
+  const { name } = useParams()
+  return <QueueDetailContent key={name} />
 }
 
 export default QueueDetail
