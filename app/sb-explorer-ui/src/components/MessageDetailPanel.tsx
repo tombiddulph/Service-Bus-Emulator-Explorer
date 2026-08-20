@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button, Checkbox, Divider, Group, Stack, Text } from '@mantine/core'
-import Editor from '@monaco-editor/react'
 import type { MessageInfo } from '../api/types'
+import MessageBodyEditor from './MessageBodyEditor'
 import MessagePropertiesTable from './MessagePropertiesTable'
 import { useAppContext } from '../App'
 import SideDrawer from './SideDrawer'
@@ -14,19 +14,14 @@ interface MessageDetailPanelProps {
   onSaveAndRequeue?: (body: string, removeFromDlq: boolean) => void
 }
 
+// Callers must remount this component (e.g. key={message?.messageId}) when the inspected message
+// changes, so this initial state isn't stale for a different message with the same body.
 const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onSaveAndRequeue }: MessageDetailPanelProps) => {
   const { theme } = useAppContext()
   const bodyValue = useMemo(() => message?.body ?? message?.bodyPreview ?? '', [message])
   const [editBody, setEditBody] = useState(bodyValue)
   const [editing, setEditing] = useState(false)
   const [removeFromDlq, setRemoveFromDlq] = useState(true)
-  const monacoTheme = theme === 'dark' ? 'vs-dark' : 'vs'
-
-  useEffect(() => {
-    setEditBody(bodyValue)
-    setEditing(false)
-    setRemoveFromDlq(true)
-  }, [bodyValue])
 
   return (
     <SideDrawer open={open} onOpenChange={onOpenChange} title={message?.messageId ?? 'Message'} width={640}>
@@ -46,13 +41,12 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
         />
       )}
       <div style={{ height: 260, border: '1px solid var(--surface-border, #ddd)', borderRadius: 8, overflow: 'hidden' }}>
-        <Editor
-          height="100%"
-          defaultLanguage="json"
+        <MessageBodyEditor
           value={editing ? editBody : bodyValue}
-          onChange={(value) => setEditBody(value ?? '')}
-          theme={monacoTheme}
-          options={{ readOnly: !editing, minimap: { enabled: false }, lineNumbers: 'off', wordWrap: 'on' }}
+          onChange={setEditBody}
+          language="json"
+          theme={theme}
+          readOnly={!editing}
         />
       </div>
 
