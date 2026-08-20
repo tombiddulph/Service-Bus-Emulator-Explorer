@@ -27,6 +27,7 @@ import type { MessageScope, MessageState, ReplayDlqResult, TopicInfo } from '../
 import StatusPill from '../components/StatusPill'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../App'
+import { summarizeReplayResult } from '../utils/replayResult'
 
 const TopicDetailContent = () => {
   const { name, subscription } = useParams()
@@ -76,13 +77,9 @@ const TopicDetailContent = () => {
   const inspectingMessage = messages?.data?.items?.find((m) => m.messageId === inspect)
 
   const handleReplaySuccess = (result: ReplayDlqResult) => {
-    const failed = result.outcomes.filter((outcome) => outcome.error)
-    notifications.show({
-      title: result.isPartial ? 'DLQ replay partially completed' : 'DLQ replay complete',
-      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${failed.length ? ` ${failed.length} message${failed.length === 1 ? '' : 's'} still require attention.` : ''}`,
-      color: result.isPartial ? 'yellow' : 'green',
-    })
-    return failed.map((outcome) => outcome.messageId)
+    const summary = summarizeReplayResult(result)
+    notifications.show(summary)
+    return summary.retryIds
   }
 
   const handleCreateSub = async (payload: { name: string; maxDeliveryCount?: number; lockDuration?: string; defaultTtl?: string }) => {
@@ -307,12 +304,8 @@ const TopicDetailContent = () => {
               {
                 onSuccess: (result) => {
                   const retryIds = handleReplaySuccess(result)
-                  if (!result.isPartial) {
-                    setSelectedIds((ids) => ids.filter((id) => id !== messageId))
-                    setInspect(undefined)
-                  } else {
-                    setSelectedIds(retryIds)
-                  }
+                  setSelectedIds(retryIds)
+                  if (!retryIds.includes(messageId)) setInspect(undefined)
                 },
                 onError: (error) => {
                   notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })

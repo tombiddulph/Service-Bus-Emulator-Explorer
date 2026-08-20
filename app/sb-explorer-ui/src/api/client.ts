@@ -6,6 +6,7 @@ import type {
   PagedResult,
   PurgeResult,
   QueueInfo,
+  ReplayDlqResult,
   SendScope,
   SubscriptionInfo,
   TopicInfo,
@@ -364,8 +365,40 @@ const mockAdapter: AxiosAdapter = async (config) => {
     return respond<PurgeResult>({ status: "Completed", removedCount }, config);
   }
 
-  if (useMockDlq && method === "post" && path?.includes("/deadletter/")) {
-    // bulk delete/replay DLQ; mock has no message store to check against, so nothing is ever "not found"
+  if (useMockDlq && method === "post" && path?.endsWith("/replay")) {
+    const payload = typeof data === "string" ? JSON.parse(data) : data;
+    const parts = path.split("/");
+    const key = parts[2] === "queue"
+      ? `queue:${parts[3]}:deadletter`
+      : `subscription:${parts[3]}:${parts[4]}:deadletter`;
+    const messages = mockData.messages[key] ?? [];
+    const requestedIds = payload?.messageIds?.length
+      ? payload.messageIds as string[]
+      : messages.map((message) => message.messageId);
+    const availableIds = new Set(messages.map((message) => message.messageId));
+    const foundIds = requestedIds.filter((messageId) => availableIds.has(messageId));
+    const notFound = requestedIds.filter((messageId) => !availableIds.has(messageId));
+    const removeFromDlq = payload?.removeFromDlq !== false;
+    const outcomes = [
+      ...foundIds.map((messageId) => ({ messageId, sent: true, removedFromDlq: removeFromDlq })),
+      ...notFound.map((messageId) => ({ messageId, sent: false, removedFromDlq: false, error: "Message was not found in the DLQ." })),
+    ];
+
+    if (removeFromDlq && foundIds.length) {
+      const replayedIds = new Set(foundIds);
+      mockData.messages[key] = messages.filter((message) => !replayedIds.has(message.messageId));
+    }
+
+    return respond<ReplayDlqResult>({
+      count: foundIds.length,
+      isPartial: notFound.length > 0,
+      outcomes,
+      ...(notFound.length ? { notFound } : {}),
+    }, config);
+  }
+
+  if (useMockDlq && method === "post" && path?.endsWith("/delete")) {
+    // Retain the lightweight CountResult behavior for mock deletes.
     const payload = typeof data === "string" ? JSON.parse(data) : data;
     return respond({ count: payload?.messageIds?.length ?? 0, notFound: [] }, config);
   }

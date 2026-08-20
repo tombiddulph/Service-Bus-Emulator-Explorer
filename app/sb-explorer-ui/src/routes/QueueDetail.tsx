@@ -20,6 +20,7 @@ import {
 } from '../api/hooks'
 import type { MessageScope, MessageState, QueueInfo, ReplayDlqResult } from '../api/types'
 import { useAppContext } from '../App'
+import { summarizeReplayResult } from '../utils/replayResult'
 
 const QueueDetailContent = () => {
   const { name } = useParams()
@@ -56,13 +57,9 @@ const QueueDetailContent = () => {
   const inspectingMessage = messages.data?.items?.find((m: any) => m.messageId === inspect)
 
   const handleReplaySuccess = (result: ReplayDlqResult) => {
-    const failed = result.outcomes.filter((outcome) => outcome.error)
-    notifications.show({
-      title: result.isPartial ? 'DLQ replay partially completed' : 'DLQ replay complete',
-      message: `Replayed ${result.count} message${result.count === 1 ? '' : 's'}.${failed.length ? ` ${failed.length} message${failed.length === 1 ? '' : 's'} still require attention.` : ''}`,
-      color: result.isPartial ? 'yellow' : 'green',
-    })
-    return failed.map((outcome) => outcome.messageId)
+    const summary = summarizeReplayResult(result)
+    notifications.show(summary)
+    return summary.retryIds
   }
 
   const handleDelete = async () => {
@@ -209,12 +206,8 @@ const QueueDetailContent = () => {
               {
                 onSuccess: (result) => {
                   const retryIds = handleReplaySuccess(result)
-                  if (!result.isPartial) {
-                    setSelectedIds((ids) => ids.filter((id) => id !== messageId))
-                    setInspect(undefined)
-                  } else {
-                    setSelectedIds(retryIds)
-                  }
+                  setSelectedIds(retryIds)
+                  if (!retryIds.includes(messageId)) setInspect(undefined)
                 },
                 onError: (error) => {
                   notifications.show({ title: 'Save & requeue failed', message: error instanceof Error ? error.message : 'Unable to requeue message.', color: 'red' })
