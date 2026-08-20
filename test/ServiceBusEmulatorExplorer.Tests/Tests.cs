@@ -82,6 +82,56 @@ public class Tests : TestBase
     }
 
     [Test]
+    public async Task ReplayQueueDlqRejectsUnsupportedUserPropertyShape()
+    {
+        const string queueName = "replay-invalid-property-queue";
+        const string messageId = "invalid-property-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "original body");
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            userProperties = new Dictionary<string, object> { ["nested"] = new { a = 1 } }
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).IsEmpty();
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ReplayQueueDlqDoesNotCountMessageWhenCompleteIsCancelled()
+    {
+        const string queueName = "replay-cancelled-complete-queue";
+        const string messageId = "cancelled-complete-message";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "original body");
+        serviceBusClient.FailCompleteForMessageId = messageId;
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new
+        {
+            messageIds = new[] { messageId },
+            removeFromDlq = true
+        });
+
+        // Send succeeded but settlement was cancelled, so this is a partial result, not a 200.
+        await Assert.That((int)response.StatusCode).IsEqualTo(207);
+        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        await Assert.That(result).IsNotNull();
+        // The count must only reflect messages that were actually completed, not just sent.
+        await Assert.That(result!.Count).IsEqualTo(0);
+
+        var replayedMessage = serviceBusClient.GetSentMessages(queueName).Single();
+        await Assert.That(replayedMessage.MessageId).IsNotEqualTo(messageId);
+
+        // The original message was abandoned (not completed), so it's still in the DLQ.
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ReplaySubscriptionDlqReplaysAndRemovesMessage()
     {
         const string topicName = "replay-topic";
@@ -157,6 +207,169 @@ public class Tests : TestBase
         await Assert.That(result.NotFound).Contains("this-id-does-not-exist");
 
         await Assert.That(serviceBusClient.GetDeadLetterMessages(entityPath)).IsEmpty();
+    }
+
+    [Test]
+    public async Task SendQueueMessageDeliversBodyContentTypeAndUserProperties()
+    {
+        const string queueName = "send-message-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/queues/{queueName}/messages", new
+        {
+            body = "{\"hello\":\"world\"}",
+            contentType = "application/json",
+            userProperties = new Dictionary<string, object> { ["source"] = "unit-test", ["retry"] = 3 }
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var sentMessage = serviceBusClient.GetSentMessages(queueName).Single();
+        await Assert.That(sentMessage.Body.ToString()).IsEqualTo("{\"hello\":\"world\"}");
+        await Assert.That(sentMessage.ContentType).IsEqualTo("application/json");
+        await Assert.That(sentMessage.ApplicationProperties["source"]).IsEqualTo("unit-test");
+        await Assert.That(Convert.ToInt64(sentMessage.ApplicationProperties["retry"])).IsEqualTo(3L);
+
+        // Confirm the body also round-trips through the peek endpoint the UI reads from.
+        var peekResponse = await client.GetAsync($"/api/queues/{queueName}/messages?mode=peek&state=active");
+        await Assert.That(peekResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var paged = await peekResponse.Content.ReadFromJsonAsync<PagedMessages>();
+        await Assert.That(paged!.Items.Single().Body).IsEqualTo("{\"hello\":\"world\"}");
+    }
+
+    [Test]
+    public async Task SendQueueMessageDeliversSessionId()
+    {
+        const string queueName = "send-message-session-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/queues/{queueName}/messages", new
+        {
+            body = "session body",
+            sessionId = "session-abc"
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var sentMessage = serviceBusClient.GetSentMessages(queueName).Single();
+        await Assert.That(sentMessage.SessionId).IsEqualTo("session-abc");
+
+        var peekResponse = await client.GetAsync($"/api/queues/{queueName}/messages?mode=peek&state=active");
+        var paged = await peekResponse.Content.ReadFromJsonAsync<PagedMessages>();
+        await Assert.That(paged!.Items.Single().SessionId).IsEqualTo("session-abc");
+    }
+
+    [Test]
+    public async Task SendTopicMessageDeliversSessionId()
+    {
+        const string topicName = "send-message-session-topic";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        var client = Factory.CreateClient();
+
+        await client.PostAsync("/api/topics", JsonContent.Create(new { name = topicName }));
+
+        var response = await client.PostAsJsonAsync($"/api/topics/{topicName}/messages", new
+        {
+            body = "session body",
+            sessionId = "session-xyz"
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(serviceBusClient.GetSentMessages(topicName).Single().SessionId).IsEqualTo("session-xyz");
+
+        await client.DeleteAsync($"/api/topics/{topicName}");
+    }
+
+    [Test]
+    public async Task PurgeQueueMessagesRemovesAllActiveMessagesOnly()
+    {
+        const string queueName = "purge-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, "dlq-message", "dlq body");
+        var client = Factory.CreateClient();
+
+        await client.PostAsJsonAsync($"/api/queues/{queueName}/messages", new { body = "active-1" });
+        await client.PostAsJsonAsync($"/api/queues/{queueName}/messages", new { body = "active-2" });
+
+        var response = await client.PostAsync($"/api/queues/{queueName}/purge", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).IsEmpty();
+        // Purge only targets active messages, DLQ is untouched.
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task PurgeSubscriptionMessagesReturnsOk()
+    {
+        const string topicName = "purge-topic";
+        const string subscriptionName = "purge-subscription";
+        var client = Factory.CreateClient();
+
+        await client.PostAsync("/api/topics", JsonContent.Create(new { name = topicName }));
+
+        // The test double doesn't simulate topic->subscription fan-out (a real broker copies each
+        // send into every subscription), so this only exercises the purge endpoint's success path.
+        var response = await client.PostAsync($"/api/topics/{topicName}/subscriptions/{subscriptionName}/purge", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await client.DeleteAsync($"/api/topics/{topicName}");
+    }
+
+    [Test]
+    public async Task SendQueueMessageRejectsUnsupportedUserPropertyShape()
+    {
+        const string queueName = "send-message-invalid-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/queues/{queueName}/messages", new
+        {
+            body = "body",
+            userProperties = new Dictionary<string, object> { ["nested"] = new { a = 1 } }
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).IsEmpty();
+    }
+
+    [Test]
+    public async Task SendTopicMessageDeliversBodyContentTypeAndUserProperties()
+    {
+        const string topicName = "send-message-topic";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        var client = Factory.CreateClient();
+
+        await client.PostAsync("/api/topics", JsonContent.Create(new { name = topicName }));
+
+        var response = await client.PostAsJsonAsync($"/api/topics/{topicName}/messages", new
+        {
+            body = "{\"hello\":\"topic\"}",
+            contentType = "application/json",
+            userProperties = new Dictionary<string, object> { ["source"] = "unit-test" }
+        });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var sentMessage = serviceBusClient.GetSentMessages(topicName).Single();
+        await Assert.That(sentMessage.Body.ToString()).IsEqualTo("{\"hello\":\"topic\"}");
+        await Assert.That(sentMessage.ContentType).IsEqualTo("application/json");
+        await Assert.That(sentMessage.ApplicationProperties["source"]).IsEqualTo("unit-test");
+
+        await client.DeleteAsync($"/api/topics/{topicName}");
+    }
+
+    [Test]
+    public async Task SendTopicMessageReturnsBadRequestWhenTopicMissing()
+    {
+        var client = Factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/topics/missing-topic/messages", new { body = "body" });
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
 
     [Test]

@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Azure;
 using Azure.Core;
 using Azure.Messaging.ServiceBus;
@@ -14,6 +15,9 @@ public class TestServiceBusClient : ServiceBusClient
     private readonly Dictionary<string, TestServiceBusReceiver> _topicReceivers = [];
     private readonly Dictionary<string, TestServiceBusSender> _senders = [];
     private readonly Dictionary<string, List<ServiceBusReceivedMessage>> _deadLetterMessages = [];
+
+    // Test hook: makes CompleteMessageAsync simulate a cancelled/timed-out settlement for this message id.
+    public string? FailCompleteForMessageId { get; set; }
 
 
     public override ServiceBusSender CreateSender(string queueOrTopicName)
@@ -128,6 +132,9 @@ public class TestServiceBusClient : ServiceBusClient
                 .Select(m => ServiceBusModelFactory.ServiceBusReceivedMessage(
                     body: m.Body,
                     messageId: m.MessageId,
+                    contentType: m.ContentType,
+                    sessionId: m.SessionId,
+                    properties: m.ApplicationProperties,
                     sequenceNumber: sender.Messages.IndexOf(m) + 1))
                 .ToList()
                 .AsReadOnly();
@@ -139,7 +146,23 @@ public class TestServiceBusClient : ServiceBusClient
             TimeSpan? maxWaitTime = null, CancellationToken cancellationToken = new())
         {
             if (!isDeadLetterReceiver)
-                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+            {
+                var sender = client._senders.GetValueOrDefault(entityPath);
+                if (sender is null)
+                    return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
+
+                var activeMessages = sender.Messages
+                    .Take(maxMessages)
+                    .Select((message, index) => ServiceBusModelFactory.ServiceBusReceivedMessage(
+                        body: message.Body,
+                        messageId: message.MessageId,
+                        contentType: message.ContentType,
+                        sequenceNumber: index + 1))
+                    .ToList();
+
+                sender.Messages.RemoveRange(0, activeMessages.Count);
+                return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>(activeMessages);
+            }
 
             var messages = DeadLetterMessages
                 .Where(m => !_locked.Contains(m.SequenceNumber))
@@ -154,9 +177,50 @@ public class TestServiceBusClient : ServiceBusClient
 
         public override Task CompleteMessageAsync(ServiceBusReceivedMessage message, CancellationToken cancellationToken = new())
         {
+            if (message.MessageId == client.FailCompleteForMessageId)
+                throw new OperationCanceledException("Simulated settlement timeout");
+
             client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(message);
             _locked.Remove(message.SequenceNumber);
             return Task.CompletedTask;
+        }
+
+        // Drains and removes every remaining message, simulating a ReceiveAndDelete purge loop.
+        public override async IAsyncEnumerable<ServiceBusReceivedMessage> ReceiveMessagesAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (isDeadLetterReceiver)
+            {
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var next = client._deadLetterMessages.GetValueOrDefault(entityPath)?.FirstOrDefault(m => !_locked.Contains(m.SequenceNumber));
+                    if (next is null) yield break;
+                    client._deadLetterMessages.GetValueOrDefault(entityPath)?.Remove(next);
+                    yield return next;
+                    await Task.Yield();
+                }
+            }
+            else
+            {
+                var sender = client._senders.GetValueOrDefault(entityPath);
+                if (sender is null) yield break;
+
+                while (sender.Messages.Count > 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var m = sender.Messages[0];
+                    sender.Messages.RemoveAt(0);
+                    yield return ServiceBusModelFactory.ServiceBusReceivedMessage(
+                        body: m.Body,
+                        messageId: m.MessageId,
+                        contentType: m.ContentType,
+                        sessionId: m.SessionId,
+                        properties: m.ApplicationProperties,
+                        sequenceNumber: 1);
+                    await Task.Yield();
+                }
+            }
         }
 
         public override Task AbandonMessageAsync(ServiceBusReceivedMessage message,
