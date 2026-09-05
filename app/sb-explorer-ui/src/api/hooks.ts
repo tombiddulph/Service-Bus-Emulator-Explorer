@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { apiClient, dlqPath, messagePath, purgePath, replayDlqPath } from './client'
 import type {
-  CountResult,
+  DeleteDlqResult,
   MessageInfo,
   MessageScope,
   MessageState,
@@ -16,6 +16,7 @@ import type {
 } from './types'
 
 const listRefetchMs = 8000
+const dlqOperationTimeoutMs = 45000
 
 export const useEnvironment = () =>
   useQuery({
@@ -186,7 +187,7 @@ export const useBulkDlqDelete = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ scope, messageIds }: BulkDlqDeleteInput) => {
-      const res = await apiClient.post<CountResult>(dlqPath(scope), { messageIds })
+       const res = await apiClient.post<DeleteDlqResult>(dlqPath(scope), { messageIds }, { timeout: dlqOperationTimeoutMs })
       return res.data
     },
     onSuccess: (_data, variables) => {
@@ -210,7 +211,7 @@ export const useReplayDlq = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ scope, messageIds, body, contentType, userProperties, removeFromDlq }: ReplayDlqInput) => {
-      const res = await apiClient.post<ReplayDlqResult>(replayDlqPath(scope), { messageIds, body, contentType, userProperties, removeFromDlq })
+       const res = await apiClient.post<ReplayDlqResult>(replayDlqPath(scope), { messageIds, body, contentType, userProperties, removeFromDlq }, { timeout: dlqOperationTimeoutMs })
       return res.data
     },
     onSuccess: (_data, variables) => {

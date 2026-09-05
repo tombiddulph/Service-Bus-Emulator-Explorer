@@ -29,6 +29,8 @@ public class TestServiceBusClient : ServiceBusClient
     public string? ExternallyLockAfterPeekForMessageId { get; set; }
     public int? DeadLetterReceiveBatchSize { get; set; }
     public TimeSpan? DeadLetterReceiveDelayAfterFirstBatch { get; set; }
+    public int? FailDeadLetterReceiveAfterCalls { get; set; }
+    public bool? LastCreatedDeadLetterReceiverUsesReceiveAndDelete { get; private set; }
     public Action<int>? ActiveBatchReceived { get; set; }
 
     public void AddActiveMessage(string entityPath, string messageId, string body)
@@ -67,7 +69,10 @@ public class TestServiceBusClient : ServiceBusClient
     public override ServiceBusReceiver CreateReceiver(string queueName,
         ServiceBusReceiverOptions receiverOptions = null)
     {
-        var receiver = new TestServiceBusReceiver(queueName, this, receiverOptions?.SubQueue == SubQueue.DeadLetter);
+        var isDeadLetter = receiverOptions?.SubQueue == SubQueue.DeadLetter;
+        var receiveAndDelete = receiverOptions?.ReceiveMode == ServiceBusReceiveMode.ReceiveAndDelete;
+        if (isDeadLetter) LastCreatedDeadLetterReceiverUsesReceiveAndDelete = receiveAndDelete;
+        var receiver = new TestServiceBusReceiver(queueName, this, isDeadLetter, receiveAndDelete);
         _queueReceivers[queueName] = receiver;
 
         return receiver;
@@ -77,7 +82,10 @@ public class TestServiceBusClient : ServiceBusClient
         ServiceBusReceiverOptions options)
     {
         var key = $"{topicName}/Subscriptions/{subscriptionName}";
-        var receiver = new TestServiceBusReceiver(key, this, options.SubQueue == SubQueue.DeadLetter);
+        var isDeadLetter = options.SubQueue == SubQueue.DeadLetter;
+        var receiveAndDelete = options.ReceiveMode == ServiceBusReceiveMode.ReceiveAndDelete;
+        if (isDeadLetter) LastCreatedDeadLetterReceiverUsesReceiveAndDelete = receiveAndDelete;
+        var receiver = new TestServiceBusReceiver(key, this, isDeadLetter, receiveAndDelete);
         _topicReceivers[key] = receiver;
 
         return receiver;
@@ -144,7 +152,7 @@ public class TestServiceBusClient : ServiceBusClient
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver) : ServiceBusReceiver
+    public class TestServiceBusReceiver(string entityPath, TestServiceBusClient client, bool isDeadLetterReceiver, bool receiveAndDelete = false) : ServiceBusReceiver
     {
         private readonly HashSet<long> _locked = [];
         private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTimeOffset> _lockedUntil = [];
@@ -236,6 +244,8 @@ public class TestServiceBusClient : ServiceBusClient
             }
 
             _deadLetterReceiveCalls++;
+            if (client.FailDeadLetterReceiveAfterCalls is { } failAfter && _deadLetterReceiveCalls > failAfter)
+                throw new ServiceBusException("Simulated DLQ receiver failure", ServiceBusFailureReason.ServiceCommunicationProblem);
             if (_deadLetterReceiveCalls > 1 && client.DeadLetterReceiveDelayAfterFirstBatch is { } delay)
                 await Task.Delay(delay, cancellationToken);
 
@@ -248,6 +258,11 @@ public class TestServiceBusClient : ServiceBusClient
             {
                 _locked.Add(message.SequenceNumber);
                 _lockedUntil[message.SequenceNumber] = DateTimeOffset.UtcNow + (client.SimulatedLockDuration ?? TimeSpan.FromMinutes(1));
+            }
+
+            if (receiveAndDelete)
+            {
+                foreach (var message in messages) DeadLetterMessages.Remove(message);
             }
 
             return messages;
@@ -317,7 +332,7 @@ public class TestServiceBusClient : ServiceBusClient
             if (message.MessageId == client.BlockAbandonForMessageId)
             {
                 client.AbandonStarted.TrySetResult();
-                await client.AllowAbandon.Task;
+                await client.AllowAbandon.Task.WaitAsync(cancellationToken);
             }
             _locked.Remove(message.SequenceNumber);
             _lockedUntil.TryRemove(message.SequenceNumber, out _);

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Options;
 
 namespace ServiceBusEmulatorExplorer.Endpoints;
 
@@ -16,12 +17,14 @@ public static class DeadLetterEndpoints
         group.MapPost("/queue/{name}/delete", BulkDeleteQueueDlq)
             .WithName("BulkDeleteQueueDlq")
             .WithSummary("Bulk delete queue DLQ")
-            .Produces(StatusCodes.Status200OK);
+            .Produces<DeleteDlqResult>(StatusCodes.Status200OK)
+            .Produces<DeleteDlqResult>(StatusCodes.Status207MultiStatus);
 
         group.MapPost("/subscription/{topic}/{sub}/delete", BulkDeleteSubscriptionDlq)
             .WithName("BulkDeleteSubscriptionDlq")
             .WithSummary("Bulk delete subscription DLQ")
-            .Produces(StatusCodes.Status200OK);
+            .Produces<DeleteDlqResult>(StatusCodes.Status200OK)
+            .Produces<DeleteDlqResult>(StatusCodes.Status207MultiStatus);
 
         group.MapPost("/queue/{name}/replay", ReplayQueueDlq)
             .WithName("ReplayQueueDlq")
@@ -38,23 +41,25 @@ public static class DeadLetterEndpoints
         return app;
     }
 
-    private static Task<IResult> BulkDeleteQueueDlq(string name, ServiceBusEndpointCache cache,
+    private static Task<IResult> BulkDeleteQueueDlq(string name, ServiceBusEndpointCache cache, IOptions<DlqOperationOptions> options,
         BulkDlqDeleteRequest? request = null) =>
-        BulkDeleteDlq(cache, options => cache.GetReceiver(name, options), request);
+        BulkDeleteDlq(cache, receiverOptions => cache.GetReceiver(name, receiverOptions), request, options.Value);
 
     private static Task<IResult> BulkDeleteSubscriptionDlq(
         string topic,
         string sub,
         ServiceBusEndpointCache cache,
+        IOptions<DlqOperationOptions> options,
         BulkDlqDeleteRequest? request = null) =>
-        BulkDeleteDlq(cache, options => cache.GetTopicReceiver(topic, sub, options), request);
+        BulkDeleteDlq(cache, receiverOptions => cache.GetTopicReceiver(topic, sub, receiverOptions), request, options.Value);
 
     private static async Task<IResult> BulkDeleteDlq(
         ServiceBusEndpointCache cache,
         Func<ServiceBusReceiverOptions, ServiceBusReceiver> receiverFactory,
-        BulkDlqDeleteRequest? request)
+        BulkDlqDeleteRequest? request,
+        DlqOperationOptions options)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(options.OperationTimeout);
 
         if (request?.MessageIds is not { Count: > 0 } requestedIds)
         {
@@ -64,17 +69,28 @@ public static class DeadLetterEndpoints
                 ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
             });
 
+            var removed = 0;
+            string? error = null;
             try
             {
                 await using var _ = await cache.LockAsync(purgeReceiver, cts.Token);
-                await purgeReceiver.ReceiveMessagesAsync(cts.Token).ToListAsync(cts.Token);
+                while (true)
+                {
+                    var batch = await purgeReceiver.ReceiveMessagesAsync(100, TimeSpan.FromSeconds(1), cts.Token);
+                    removed += batch.Count;
+                    cts.Token.ThrowIfCancellationRequested();
+                    if (batch.Count == 0) break;
+                }
             }
             catch (Exception e)
             {
                 Activity.Current?.AddException(e);
+                error = cts.IsCancellationRequested ? "DLQ deletion timed out. Messages may remain." : $"DLQ deletion stopped: {e.Message}";
             }
 
-            return Results.Ok();
+            return DeleteHttpResult(new DeleteDlqResult(removed,
+                error is null ? DlqDeleteStatus.Completed : cts.IsCancellationRequested ? DlqDeleteStatus.TimedOut : removed > 0 ? DlqDeleteStatus.Partial : DlqDeleteStatus.Failed,
+                [], Error: error));
         }
 
         var receiver = receiverFactory(new()
@@ -86,33 +102,83 @@ public static class DeadLetterEndpoints
         var wanted = requestedIds.ToHashSet(StringComparer.Ordinal);
         var locked = new List<ServiceBusReceivedMessage>();
         var notFound = new HashSet<string>();
-        var completed = new HashSet<long>();
+        var completed = new ConcurrentDictionary<long, byte>();
         var deleted = 0;
+        var outcomes = new List<DeleteMessageOutcome>();
+        var renewing = new ConcurrentDictionary<long, ServiceBusReceivedMessage>();
+        var renewalFailures = new ConcurrentDictionary<long, string>();
+        using var renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        Task? renewalTask = null;
+        IAsyncDisposable? operationLock = null;
+        string? operationError = null;
 
         try
         {
-            await using var _ = await cache.LockAsync(receiver, cts.Token);
-
-            (locked, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token);
+            operationLock = await cache.LockAsync(receiver, cts.Token);
+            renewalTask = RenewLocksAsync(receiver, renewing, completed, renewalFailures, renewalCts.Token);
+            (_, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token, messages =>
+            {
+                locked.AddRange(messages);
+                foreach (var message in messages) renewing.TryAdd(message.SequenceNumber, message);
+            });
 
             foreach (var message in locked.Where(message => wanted.Contains(message.MessageId)))
             {
-                await receiver.CompleteMessageAsync(message, cts.Token);
-                completed.Add(message.SequenceNumber);
-                deleted++;
+                if (renewalFailures.TryGetValue(message.SequenceNumber, out var renewalError))
+                {
+                    outcomes.Add(new(message.MessageId, false, renewalError));
+                    continue;
+                }
+                try
+                {
+                    await receiver.CompleteMessageAsync(message, cts.Token);
+                    completed.TryAdd(message.SequenceNumber, 0);
+                    deleted++;
+                    outcomes.Add(new(message.MessageId, true));
+                }
+                catch (Exception e)
+                {
+                    Activity.Current?.AddException(e);
+                    outcomes.Add(new(message.MessageId, false, $"Deletion could not be confirmed: {e.Message}"));
+                    if (cts.IsCancellationRequested) throw;
+                }
             }
         }
         catch (Exception e)
         {
             Activity.Current?.AddException(e);
+            operationError = cts.IsCancellationRequested ? "DLQ deletion timed out before all requested messages were processed." : $"DLQ deletion stopped: {e.Message}";
         }
         finally
         {
-            await ReleaseAsync(receiver, locked.Where(message => !completed.Contains(message.SequenceNumber)));
+            try
+            {
+                await renewalCts.CancelAsync();
+                if (renewalTask is not null)
+                    try { await renewalTask; }
+                    catch (OperationCanceledException) { }
+                var cleanupError = await ReleaseAsync(receiver, locked.Where(message => !completed.ContainsKey(message.SequenceNumber)), options.CleanupTimeout);
+                operationError = JoinErrors(operationError, cleanupError);
+            }
+            finally
+            {
+                if (operationLock is not null) await operationLock.DisposeAsync();
+            }
         }
 
-        return Results.Ok(new CountResult(deleted, notFound.Count > 0 ? notFound.ToList() : null));
+        var reported = outcomes.Select(outcome => outcome.MessageId).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in wanted.Where(id => !reported.Contains(id)))
+            outcomes.Add(new(id, false, notFound.Contains(id) ? "Message was not found in the DLQ." : operationError ?? "Message could not be locked for deletion."));
+        var failed = operationError is not null || outcomes.Any(outcome => !outcome.Deleted);
+        var status = !failed ? DlqDeleteStatus.Completed : cts.IsCancellationRequested ? DlqDeleteStatus.TimedOut : deleted > 0 ? DlqDeleteStatus.Partial : DlqDeleteStatus.Failed;
+        return DeleteHttpResult(new DeleteDlqResult(deleted, status, outcomes, notFound.Count > 0 ? notFound.ToList() : null, operationError));
     }
+
+    private static IResult DeleteHttpResult(DeleteDlqResult result) => result.IsPartial
+        ? Results.Json(result, AppJsonContext.Default.DeleteDlqResult, statusCode: StatusCodes.Status207MultiStatus)
+        : Results.Ok(result);
+
+    private static string? JoinErrors(string? first, string? second) => first is null ? second : second is null ? first : $"{first} {second}";
 
     // Locks the smallest prefix of the dead letter queue that still contains every requested message.
     // Receiving is what ticks DeliveryCount, so peek (which does not) to find that boundary first.
@@ -140,6 +206,7 @@ public static class DeadLetterEndpoints
             onLocked?.Invoke(fresh);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return (locked, notFound);
     }
 
@@ -173,34 +240,40 @@ public static class DeadLetterEndpoints
         return (needed, remaining ?? []);
     }
 
-    private static async Task ReleaseAsync(ServiceBusReceiver receiver, IEnumerable<ServiceBusReceivedMessage> messages)
+    private static async Task<string?> ReleaseAsync(ServiceBusReceiver receiver, IEnumerable<ServiceBusReceivedMessage> messages, TimeSpan timeout)
     {
+        // Cleanup has its own budget: the operation token may already have expired.
+        using var cts = new CancellationTokenSource(timeout);
+        string? error = null;
         foreach (var message in messages)
         {
             try
             {
-                await receiver.AbandonMessageAsync(message);
+                await receiver.AbandonMessageAsync(message, cancellationToken: cts.Token);
             }
             catch (Exception e)
             {
                 Activity.Current?.AddException(e);
+                error = "Some broker locks could not be released. Refresh after the locks expire before retrying.";
+                if (cts.IsCancellationRequested) break;
             }
         }
+        return error;
     }
 
-    private static Task<IResult> ReplayQueueDlq(string name, ReplayDlqRequest request, ServiceBusEndpointCache cache, ServiceBusClient client) =>
+    private static Task<IResult> ReplayQueueDlq(string name, ReplayDlqRequest request, ServiceBusEndpointCache cache, IOptions<DlqOperationOptions> options) =>
         ReplayDlq(cache, cache.GetReceiver(name, new() { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock }),
-            client.CreateSender(name), request);
+            cache.GetSender(name), request, options.Value);
 
     private static Task<IResult> ReplaySubscriptionDlq(string topic, string sub, ReplayDlqRequest request,
-        ServiceBusEndpointCache cache, ServiceBusClient client) =>
+        ServiceBusEndpointCache cache, IOptions<DlqOperationOptions> options) =>
         ReplayDlq(cache, cache.GetTopicReceiver(topic, sub, new() { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock }),
-            client.CreateSender(topic), request);
+            cache.GetSender(topic), request, options.Value);
 
     private static async Task<IResult> ReplayDlq(ServiceBusEndpointCache cache, ServiceBusReceiver receiver, ServiceBusSender sender,
-        ReplayDlqRequest request)
+        ReplayDlqRequest request, DlqOperationOptions options)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(options.OperationTimeout);
         var wanted = request.MessageIds is { Count: > 0 } ? request.MessageIds.ToHashSet(StringComparer.Ordinal) : null;
 
         // Reject unsupported JSON property shapes before locking any messages.
@@ -233,8 +306,9 @@ public static class DeadLetterEndpoints
             operationLock = await cache.LockAsync(receiver, cts.Token);
             renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
             renewalTask = RenewLocksAsync(receiver, renewing, completed, renewalFailures, renewalCts.Token);
-            (locked, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token, messages =>
+            (_, notFound) = await LockDeadLetterMessagesAsync(receiver, wanted, cts.Token, messages =>
             {
+                locked.AddRange(messages);
                 foreach (var message in messages)
                     renewing.TryAdd(message.SequenceNumber, message);
             });
@@ -273,13 +347,14 @@ public static class DeadLetterEndpoints
 
                 try
                 {
+                    cts.Token.ThrowIfCancellationRequested();
                     await sender.SendMessageAsync(replay, cts.Token);
                 }
-                catch (Exception e) when (e is not OperationCanceledException || cts.IsCancellationRequested)
+                catch (Exception e)
                 {
                     Activity.Current?.AddException(e);
                     outcomes.Add(new(message.MessageId, false, false,
-                        cts.IsCancellationRequested ? "Replay timed out before the message could be sent." : e.Message));
+                        $"Send outcome could not be confirmed. Check the destination before retrying. {e.Message}", SendOutcomeUnknown: true));
                     if (cts.IsCancellationRequested) break;
                     continue;
                 }
@@ -313,6 +388,11 @@ public static class DeadLetterEndpoints
             operationError = "Replay timed out before all requested messages could be processed.";
             // Outcomes for work that had not started are added below, alongside not-found messages.
         }
+        catch (Exception e)
+        {
+            Activity.Current?.AddException(e);
+            operationError = $"Replay stopped: {e.Message}";
+        }
         finally
         {
             if (renewalCts is not null)
@@ -321,21 +401,31 @@ public static class DeadLetterEndpoints
                 if (renewalTask is not null)
                     try { await renewalTask; }
                     catch (OperationCanceledException) { }
+                    catch (Exception e)
+                    {
+                        Activity.Current?.AddException(e);
+                        operationError = JoinErrors(operationError, "Message lock renewal stopped unexpectedly during cleanup.");
+                    }
                 renewalCts.Dispose();
             }
 
-            // Keep the canonical entity/subqueue lock until every unsettled broker lock is released.
-            await ReleaseAsync(receiver, locked.Where(message => !completed.ContainsKey(message.SequenceNumber)));
-            if (operationLock is not null)
-                await operationLock.DisposeAsync();
-            await sender.DisposeAsync();
+            // Retain the entity/subqueue lock through cleanup, even after partial acquisition.
+            try
+            {
+                var cleanupError = await ReleaseAsync(receiver, locked.Where(message => !completed.ContainsKey(message.SequenceNumber)), options.CleanupTimeout);
+                operationError = JoinErrors(operationError, cleanupError);
+            }
+            finally
+            {
+                if (operationLock is not null) await operationLock.DisposeAsync();
+            }
         }
 
         if (wanted is null)
         {
             var reported = outcomes.Select(outcome => outcome.MessageId).ToHashSet(StringComparer.Ordinal);
             foreach (var message in locked.Where(message => !reported.Contains(message.MessageId)))
-                outcomes.Add(new(message.MessageId, false, false, "Replay timed out before this message was processed."));
+                outcomes.Add(new(message.MessageId, false, false, operationError ?? "Replay stopped before this message was processed."));
         }
         else
         {

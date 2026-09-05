@@ -55,6 +55,7 @@ builder.Services.AddAzureClients(clientBuilder =>
 builder.Services.AddSpaStaticFiles(options => { options.RootPath = "wwwroot"; });
 
 builder.Services.AddSingleton<ServiceBusEndpointCache>();
+builder.Services.AddOptions<DlqOperationOptions>();
 
 
 builder.Services.AddCors(options =>

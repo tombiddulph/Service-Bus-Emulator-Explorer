@@ -12,11 +12,12 @@ interface MessageDetailPanelProps {
   onOpenChange: (open: boolean) => void
   editable?: boolean
   onSaveAndRequeue?: (body: string, removeFromDlq: boolean) => void
+  pending?: boolean
 }
 
 // Callers must remount this component (e.g. key={message?.messageId}) when the inspected message
 // changes, so this initial state isn't stale for a different message with the same body.
-const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onSaveAndRequeue }: MessageDetailPanelProps) => {
+const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onSaveAndRequeue, pending = false }: MessageDetailPanelProps) => {
   const { theme } = useAppContext()
   const bodyValue = useMemo(() => message?.body ?? message?.bodyPreview ?? '', [message])
   const [editBody, setEditBody] = useState(bodyValue)
@@ -32,7 +33,7 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
         <Text size="sm" c="dimmed">Delivery count: {message?.deliveryCount ?? 0}</Text>
       </Stack>
       <Divider my="sm" />
-      {editable && !editing && <Button variant="light" onClick={() => setEditing(true)}>Edit</Button>}
+      {editable && !editing && <Button variant="light" disabled={pending} onClick={() => setEditing(true)}>Edit</Button>}
       {editable && editing && (
         <Checkbox
           mt="sm"
@@ -66,7 +67,7 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
           >
             Cancel
           </Button>
-          <Button onClick={() => onSaveAndRequeue?.(editBody, removeFromDlq)}>Save &amp; Requeue</Button>
+          <Button loading={pending} disabled={pending} onClick={() => onSaveAndRequeue?.(editBody, removeFromDlq)}>Save &amp; Requeue</Button>
         </Group>
       )}
     </SideDrawer>
