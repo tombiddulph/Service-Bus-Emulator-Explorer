@@ -1,5 +1,4 @@
-import { Drawer, Stack, Group, ActionIcon, Title } from '@mantine/core'
-import { IconX } from '@tabler/icons-react'
+import { Drawer, Stack } from '@mantine/core'
 import type { ReactNode } from 'react'
 
 interface SideDrawerProps {
@@ -18,27 +17,17 @@ const SideDrawer = ({ open, title, width = 540, onOpenChange, children }: SideDr
       position="right"
       size={width}
       padding="lg"
+      title={title}
       withOverlay
-      overlayProps={{ opacity: 0.4, blur: 2 }}
-      styles={{
-        content: {
-          borderTopLeftRadius: 16,
-          borderBottomLeftRadius: 16,
-        },
-      }}
+      overlayProps={{ opacity: 0.12, style: { top: 48 } }}
+      styles={{ inner: { top: 48, height: 'calc(100% - 48px)' }, content: { height: '100%' } }}
+      closeButtonProps={{ 'aria-label': 'Close message details' }}
       classNames={{
-        content: 'drawer-content',
+        content: 'portal-blade',
+        header: 'portal-blade-header',
       }}
     >
       <Stack gap="md">
-        <Group justify="space-between" align="center">
-          <Title order={5} c="inherit">
-            {title}
-          </Title>
-          <ActionIcon variant="subtle" aria-label="Close" onClick={() => onOpenChange(false)}>
-            <IconX size={18} />
-          </ActionIcon>
-        </Group>
         {children}
       </Stack>
     </Drawer>

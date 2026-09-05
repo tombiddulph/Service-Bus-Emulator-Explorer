@@ -53,7 +53,7 @@ const columns: Column<MessageInfo>[] = [
 const MessageGrid = ({
   messages,
   loading,
-  state: _state,
+  state,
   skip,
   take,
   onPageChange,
@@ -61,7 +61,7 @@ const MessageGrid = ({
   onSelectionChange,
   onInspect,
 }: MessageGridProps) => {
-  const items = messages?.items ?? []
+  const items = useMemo(() => messages?.items ?? [], [messages?.items])
   const hasNext = messages?.hasMore || (messages?.total ? skip + take < messages.total : items.length === take)
   const canPrev = skip > 0
 
@@ -81,8 +81,8 @@ const MessageGrid = ({
   const end = skip + items.length
 
   return (
-    <Paper withBorder shadow="sm" radius="md" p="sm" style={{ color: 'var(--mantine-color-text)' }}>
-      <Group align="center" gap="xs" mb="sm">
+    <Paper radius={0} p={0} style={{ color: 'var(--mantine-color-text)' }}>
+      <Group align="center" gap="xs" mb="sm" className="portal-command-bar">
         <Tooltip label="Previous">
           <ActionIcon
             variant="light"
@@ -112,18 +112,19 @@ const MessageGrid = ({
 
       <ScrollArea>
         <Table
+          className="portal-table"
           highlightOnHover
-          verticalSpacing="sm"
+          verticalSpacing="xs"
           horizontalSpacing="md"
           striped={false}
-          withRowBorders={false}
+          withRowBorders
           miw={700}
           styles={{ th: { color: 'inherit' }, td: { color: 'inherit' } }}
         >
           <Table.Thead>
             <Table.Tr>
               <Table.Th>
-                <Checkbox checked={allSelected} onChange={() => toggleSelectAll()} />
+                <Checkbox aria-label="Select all messages on this page" checked={allSelected} indeterminate={!allSelected && items.some(item => selectedIds.includes(item.messageId))} onChange={() => toggleSelectAll()} />
               </Table.Th>
               {columns.map((column) => (
                 <Table.Th key={column.id}>{column.label}</Table.Th>
@@ -131,17 +132,25 @@ const MessageGrid = ({
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
+            {items.length === 0 && <Table.Tr><Table.Td colSpan={columns.length + 1}>
+              <Text size="sm" c="dimmed" ta="center" py="xl" role="status">
+                {loading ? 'Loading messages…' : skip > 0 ? 'No messages on this page. Go back to the previous page.' : state === 'deadletter' ? 'No dead-letter messages.' : 'No active messages.'}
+              </Text>
+            </Table.Td></Table.Tr>}
             {items.map((item) => (
               <Table.Tr key={item.messageId} style={{ cursor: onInspect ? 'pointer' : 'default' }} onClick={() => onInspect?.(item)}>
                 <Table.Td>
                   <Checkbox
+                    aria-label={`Select message ${item.messageId}`}
                     checked={selectedIds.includes(item.messageId)}
                     onClick={(e) => e.stopPropagation()}
                     onChange={() => toggleSelection(item.messageId)}
                   />
                 </Table.Td>
                 {columns.map((column) => (
-                  <Table.Td key={column.id}>{column.render(item)}</Table.Td>
+                  <Table.Td key={column.id}>{column.id === 'messageId' && onInspect
+                    ? <button className="portal-link-button" onClick={event => { event.stopPropagation(); onInspect(item) }}>{item.messageId}</button>
+                    : column.render(item)}</Table.Td>
                 ))}
               </Table.Tr>
             ))}

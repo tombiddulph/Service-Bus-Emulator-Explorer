@@ -1,5 +1,6 @@
-import { ActionIcon, Badge, Group, Paper, Title, Tooltip } from '@mantine/core'
-import { IconPlus, IconSend, IconTrash } from '@tabler/icons-react'
+import { Button, Group, Text, Tooltip } from '@mantine/core'
+import { useQueryClient } from '@tanstack/react-query'
+import { IconMessageDots, IconPlus, IconRefresh, IconSend, IconTopologyStar, IconTrash } from '@tabler/icons-react'
 import type { EntityStatus } from '../api/types'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import StatusPill from './StatusPill'
@@ -17,71 +18,26 @@ interface EntityHeaderProps {
   onCreateSubscription?: () => void
 }
 
-const EntityHeader = ({
-  name,
-  type,
-  status,
-  activeCount,
-  deadLetterCount,
-  activeCountIsExact,
-  deadLetterCountIsExact,
-  onSend,
-  onDelete,
-  onCreateSubscription,
-}: EntityHeaderProps) => {
-  return (
-    <Paper withBorder shadow="sm" radius="lg" p="md" mb="md" style={{ color: 'var(--mantine-color-text)' }}>
-      <Group justify="space-between" align="center">
-        <Group gap={8} align="center">
-          <Title order={3}>{name}</Title>
-          <StatusPill status={status} />
-          <Badge variant="light" color="blue" radius="sm">
-            {type}
-          </Badge>
-          <Group gap={6} align="center">
-            {activeCount !== undefined && (
-              <Tooltip label={messageCountTooltip(activeCountIsExact)} disabled={activeCountIsExact !== false}>
-                <Badge variant="outline" color="gray" radius="sm">
-                  Active: {formatMessageCount(activeCount, activeCountIsExact)}
-                </Badge>
-              </Tooltip>
-            )}
-            {deadLetterCount !== undefined && (
-              <Tooltip label={messageCountTooltip(deadLetterCountIsExact)} disabled={deadLetterCountIsExact !== false}>
-                <Badge variant="outline" color="red" radius="sm">
-                  DLQ: {formatMessageCount(deadLetterCount, deadLetterCountIsExact)}
-                </Badge>
-              </Tooltip>
-            )}
-          </Group>
-        </Group>
-
-        <Group gap={8} align="center">
-          {type !== 'subscription' && onCreateSubscription && (
-            <Tooltip label="Create subscription">
-              <ActionIcon variant="light" color="blue" aria-label="Create subscription" onClick={onCreateSubscription}>
-                <IconPlus size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {onSend && (
-            <Tooltip label="Send message">
-              <ActionIcon variant="light" color="green" aria-label="Send message" onClick={onSend}>
-                <IconSend size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {onDelete && (
-            <Tooltip label="Delete">
-              <ActionIcon variant="light" color="red" aria-label="Delete" onClick={onDelete}>
-                <IconTrash size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Group>
-      </Group>
-    </Paper>
-  )
+const EntityHeader = ({ name, type, status, activeCount, deadLetterCount, activeCountIsExact, deadLetterCountIsExact, onSend, onDelete, onCreateSubscription }: EntityHeaderProps) => {
+  const queryClient = useQueryClient()
+  const Icon = type === 'queue' ? IconMessageDots : IconTopologyStar
+  return <section aria-label={`${type} overview`}>
+    <div className="portal-resource-heading">
+      <Icon size={36} stroke={1.4} className="portal-resource-icon" />
+      <div><h1>{name}</h1><Text size="xs" c="dimmed">Service Bus {type}</Text></div>
+    </div>
+    <div className="portal-command-bar" role="toolbar" aria-label="Resource commands">
+      {onSend && <Button variant="subtle" leftSection={<IconSend size={16} />} onClick={onSend}>Send message</Button>}
+      {onCreateSubscription && <Button variant="subtle" leftSection={<IconPlus size={16} />} onClick={onCreateSubscription}>Subscription</Button>}
+      <Button variant="subtle" leftSection={<IconRefresh size={16} />} onClick={() => queryClient.invalidateQueries()}>Refresh</Button>
+      {onDelete && <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={onDelete}>Delete</Button>}
+    </div>
+    <Group gap="xl" pt="sm">
+      <StatusPill status={status} />
+      {activeCount !== undefined && <Tooltip label={messageCountTooltip(activeCountIsExact)}><Text size="sm">Active messages: <strong>{formatMessageCount(activeCount, activeCountIsExact)}</strong></Text></Tooltip>}
+      {deadLetterCount !== undefined && <Tooltip label={messageCountTooltip(deadLetterCountIsExact)}><Text size="sm">Dead-letter messages: <strong>{formatMessageCount(deadLetterCount, deadLetterCountIsExact)}</strong></Text></Tooltip>}
+    </Group>
+  </section>
 }
 
 export default EntityHeader

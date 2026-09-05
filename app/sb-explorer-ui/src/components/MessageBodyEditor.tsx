@@ -11,7 +11,7 @@ interface MessageBodyEditorProps {
 
 // Shared body editor so Send Message and the message detail/replay views stay in sync.
 const MessageBodyEditor = ({ value, onChange, language = 'plaintext', theme, readOnly = false, height = 260 }: MessageBodyEditorProps) => (
-  <div style={{ height, border: '1px solid var(--mantine-color-gray-4)', borderRadius: 8, overflow: 'hidden', background: 'var(--mantine-color-body)' }}>
+  <div style={{ height, border: '1px solid var(--portal-border)', overflow: 'hidden', background: 'var(--mantine-color-body)' }}>
     <Editor
       height="100%"
       language={language}

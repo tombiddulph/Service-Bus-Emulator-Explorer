@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Button, Checkbox, Group, Loader, Stack, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { IconPlayerPlay, IconRefresh, IconTrash } from '@tabler/icons-react'
 import EntityHeader from '../components/EntityHeader'
 import EntityOverviewCard from '../components/EntityOverviewCard'
 import MessageDetailPanel from '../components/MessageDetailPanel'
@@ -18,7 +19,7 @@ import {
   useReplayDlq,
   useSendMessage,
 } from '../api/hooks'
-import type { MessageScope, MessageState, QueueInfo, ReplayDlqResult } from '../api/types'
+import type { MessageScope, MessageState, ReplayDlqResult } from '../api/types'
 import { useAppContext } from '../App'
 import { summarizeReplayResult } from '../utils/replayResult'
 
@@ -27,8 +28,7 @@ const QueueDetailContent = () => {
   const navigate = useNavigate()
   const { theme } = useAppContext()
   const { data: queues, isLoading } = useQueues()
-  const queueList = (Array.isArray(queues) ? queues : queues ? Object.values(queues as any) : []) as QueueInfo[]
-  const queue = useMemo(() => queueList.find((q) => q.name === name), [queueList, name])
+  const queue = queues?.find(q => q.name === name)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
   const [skip, setSkip] = useState(0)
@@ -54,7 +54,7 @@ const QueueDetailContent = () => {
   const deleteQueue = useDeleteQueue()
   const purgeMessages = usePurgeMessages()
 
-  const inspectingMessage = messages.data?.items?.find((m: any) => m.messageId === inspect)
+  const inspectingMessage = messages.data?.items?.find(m => m.messageId === inspect)
 
   const handleReplaySuccess = (result: ReplayDlqResult) => {
     const summary = summarizeReplayResult(result)
@@ -108,14 +108,17 @@ const QueueDetailContent = () => {
           }}
           activeCount={queue.activeMessageCount}
           deadLetterCount={queue.deadLetterMessageCount}
+          activeCountIsExact={queue.activeMessageCountIsExact}
+          deadLetterCountIsExact={queue.deadLetterMessageCountIsExact}
         />
 
-        <Group justify="space-between" align="center">
-          <Text fw={600}>Messages</Text>
+        <Group gap={4} className="portal-command-bar" role="toolbar" aria-label="Message commands">
+          <Button variant="subtle" leftSection={<IconRefresh size={16} />} loading={messages.isFetching} onClick={() => messages.refetch()}>Refresh messages</Button>
             {messageState === 'active' && (
               <Button
                 color="red"
-                variant="light"
+                variant="subtle"
+                leftSection={<IconTrash size={16} />}
                 disabled={purgeMessages.isPending || !queue.activeMessageCount}
                 onClick={() => setPurgeTarget({ type: 'queue', name })}
               >
@@ -130,7 +133,8 @@ const QueueDetailContent = () => {
                   onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
                 />
                 <Button
-                  color="teal"
+                  variant="subtle"
+                  leftSection={<IconPlayerPlay size={16} />}
                   disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
                   onClick={() =>
                     replayDlq.mutate(
@@ -150,6 +154,8 @@ const QueueDetailContent = () => {
                 </Button>
                 <Button
                   color="red"
+                  variant="subtle"
+                  leftSection={<IconTrash size={16} />}
                   disabled={selectedIds.length === 0 || bulkDelete.isPending}
                   onClick={() =>
                     bulkDelete.mutate(

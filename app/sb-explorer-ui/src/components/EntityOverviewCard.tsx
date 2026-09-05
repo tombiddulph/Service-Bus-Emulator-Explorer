@@ -1,28 +1,17 @@
-import { Card, Group, SimpleGrid, Text } from '@mantine/core'
+import { SimpleGrid, Text } from '@mantine/core'
 
 interface OverviewCardProps {
   title: string
   items: { label: string; value?: string | number | null }[]
 }
 
-const EntityOverviewCard = ({ title, items }: OverviewCardProps) => {
-  return (
-    <Card withBorder shadow="sm" radius="lg" padding="md" style={{ color: 'var(--mantine-color-text)' }}>
-      <Group mb="xs" justify="space-between">
-        <Text fw={700}>{title}</Text>
-      </Group>
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
-        {items.map((item) => (
-          <Card key={item.label} radius="md" padding="sm" withBorder>
-            <Text size="xs" c="dimmed" mb={4}>
-              {item.label}
-            </Text>
-            <Text>{item.value ?? '—'}</Text>
-          </Card>
-        ))}
-      </SimpleGrid>
-    </Card>
-  )
-}
+const EntityOverviewCard = ({ title, items }: OverviewCardProps) => (
+  <section className="portal-essentials" aria-label={title}>
+    <Text fw={600} mb="sm">{title === 'Properties' ? 'Essentials' : title}</Text>
+    <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xl" verticalSpacing={8}>
+      {items.map(item => <dl className="portal-property" key={item.label} style={{ margin: 0 }}><dt>{item.label}</dt><dd>{item.value ?? '—'}</dd></dl>)}
+    </SimpleGrid>
+  </section>
+)
 
 export default EntityOverviewCard
