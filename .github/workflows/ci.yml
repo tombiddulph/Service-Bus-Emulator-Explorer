@@ -4,9 +4,22 @@ on:
   push:
     branches:
       - '**'
+    # Skip only when every changed file is documentation or editor metadata.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.idea/**'
+      - '.vscode/**'
+      - '**/*.DotSettings.user'
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.idea/**'
+      - '.vscode/**'
+      - '**/*.DotSettings.user'
 
 jobs:
   version:
