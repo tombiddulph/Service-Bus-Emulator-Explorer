@@ -32,6 +32,16 @@ public class Tests : TestBase
     }
 
     [Test]
+    public async Task OpenApiDocumentCanBeGenerated()
+    {
+        var response = await Factory.CreateClient().GetAsync("/openapi/v1.json");
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("application/json");
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("/api/queues");
+    }
+
+    [Test]
     public async Task ReplayQueueDlqReplaysSelectedMessageWithOverrides()
     {
         const string queueName = "replay-test-queue";
