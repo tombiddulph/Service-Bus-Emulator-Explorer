@@ -1,75 +1,80 @@
 :root {
-  font-family: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  background-color: var(--mantine-color-body);
-  color: var(--mantine-color-text);
-}
-
-#root {
-  min-height: 100vh;
-}
-
 :root[data-mantine-color-scheme='light'] {
   color-scheme: light;
+  --portal-surface: #fff;
+  --portal-nav: #f5f5f5;
+  --portal-border: #dedede;
+  --portal-hover: #f0f0f0;
+  --portal-selected: #e6f2fb;
+  --portal-link: #0078d4;
+  --mantine-color-body: #fff;
+  --mantine-color-text: #242424;
 }
 
 :root[data-mantine-color-scheme='dark'] {
   color-scheme: dark;
+  --portal-surface: #202020;
+  --portal-nav: #292929;
+  --portal-border: #454545;
+  --portal-hover: #333;
+  --portal-selected: #143c56;
+  --portal-link: #75b6e7;
+  --mantine-color-body: #202020;
+  --mantine-color-text: #f2f2f2;
 }
 
-html, body {
-  width: 100%;
-  overflow-x: hidden;
-}
-
-.drawer-content {
-  background-color: var(--mantine-color-body);
-  color: inherit;
-}
-
-.nav-tree-link {
-  --nl-bg: transparent;
-  --nl-hover: transparent;
-  --nl-color: inherit;
-  color: inherit;
-  background-color: transparent;
-  transition: background-color 160ms ease, box-shadow 160ms ease;
-}
-
-:root[data-mantine-color-scheme='light'] .nav-tree-link:hover,
-:root[data-mantine-color-scheme='light'] .nav-tree-link[data-hovered] {
-  background-color: rgba(255, 255, 255, 0.32);
-  box-shadow: inset 3px 0 0 rgba(255, 255, 255, 0.6);
-}
-
-:root[data-mantine-color-scheme='dark'] .nav-tree-link:hover,
-:root[data-mantine-color-scheme='dark'] .nav-tree-link[data-hovered] {
-  background-color: rgba(255, 255, 255, 0.2);
-  box-shadow: inset 3px 0 0 rgba(255, 255, 255, 0.4);
-}
-
-:root[data-mantine-color-scheme='light'] .nav-tree-link[data-active],
-:root[data-mantine-color-scheme='light'] .nav-tree-link[aria-current='page'] {
-  background-color: rgba(255, 255, 255, 0.42);
-  box-shadow: inset 3px 0 0 rgba(255, 255, 255, 0.8);
-}
-
-:root[data-mantine-color-scheme='dark'] .nav-tree-link[data-active],
-:root[data-mantine-color-scheme='dark'] .nav-tree-link[aria-current='page'] {
-  background-color: rgba(255, 255, 255, 0.32);
-  box-shadow: inset 3px 0 0 rgba(255, 255, 255, 0.6);
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: var(--portal-surface); }
+#root { min-height: 100vh; }
+button, a, input { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--portal-link); outline-offset: 2px; }
+.portal-topbar { background: #0078d4; color: #fff; border: 0; }
+[data-mantine-color-scheme='dark'] .portal-topbar { background: #111; }
+.portal-brand { white-space: nowrap; font-size: 16px; }
+.portal-topbar-label { border-left: 1px solid #ffffff66; padding-left: 14px; }
+.portal-sidebar { background: var(--portal-nav); border-right: 1px solid var(--portal-border); }
+.portal-nav-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.portal-sidebar-footer { border-top: 1px solid var(--portal-border); }
+.portal-resource-link { display: flex; align-items: center; gap: 8px; padding: 7px 12px; min-width: 0; flex: 1; color: inherit; text-decoration: none; font-size: 13px; border-left: 3px solid transparent; }
+.portal-resource-link svg { flex-shrink: 0; color: var(--portal-link); }
+.portal-resource-link span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.portal-resource-link .portal-nav-dlq { margin-left: auto; flex-shrink: 0; min-width: max-content; }
+.portal-resource-link:hover { background: var(--portal-hover); }
+.portal-resource-link[aria-current='page'] { background: var(--portal-selected); border-left-color: var(--portal-link); }
+.portal-resource-link-compact { justify-content: center; padding: 12px; }
+.portal-nav-children { padding-left: 14px; }
+.portal-breadcrumbs { padding: 12px 24px 8px; overflow-x: auto; }
+.portal-workspace { padding: 8px 24px 32px; }
+.portal-resource-heading { display: flex; gap: 12px; align-items: center; padding: 4px 0 18px; min-width: 0; }
+.portal-resource-heading h1 { font-size: 24px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.portal-resource-icon { color: var(--portal-link); flex-shrink: 0; }
+.portal-command-bar { min-height: 42px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--portal-border); border-bottom: 1px solid var(--portal-border); padding: 5px 0; }
+.portal-command-bar .mantine-Button-root { font-weight: 400; }
+.portal-essentials { padding: 4px 0 18px; border-bottom: 1px solid var(--portal-border); }
+.portal-property { display: grid; grid-template-columns: minmax(100px, 40%) 1fr; gap: 12px; font-size: 13px; }
+.portal-property dd { margin: 0; overflow-wrap: anywhere; }
+.portal-property dt { color: var(--mantine-color-dimmed); }
+.portal-table { font-size: 13px; }
+.portal-table th { font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--portal-border); }
+.portal-table td { border-bottom: 1px solid var(--portal-border); }
+.portal-table .mantine-Badge-root { flex-shrink: 0; white-space: nowrap; min-width: max-content; }
+.portal-table tbody tr:hover { background: var(--portal-hover); }
+.portal-link-button { border: 0; padding: 0; background: transparent; color: var(--portal-link); font: inherit; text-align: left; cursor: pointer; }
+.portal-link-button:hover { text-decoration: underline; }
+.portal-blade { background: var(--portal-surface); border-left: 1px solid var(--portal-border); }
+.portal-blade-header { border-bottom: 1px solid var(--portal-border); }
+.portal-blade-header h2 { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+.portal-blade-header { margin-bottom: 16px; }
+@media (max-width: 48em) {
+  .portal-workspace { padding: 8px 12px 24px; }
+  .portal-breadcrumbs { padding-left: 12px; padding-right: 12px; }
+  .portal-resource-heading h1 { font-size: 21px; }
+  .portal-brand { font-size: 14px; }
 }

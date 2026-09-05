@@ -24,7 +24,8 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
   const [removeFromDlq, setRemoveFromDlq] = useState(true)
 
   return (
-    <SideDrawer open={open} onOpenChange={onOpenChange} title={message?.messageId ?? 'Message'} width={640}>
+    <SideDrawer open={open} onOpenChange={onOpenChange} title="Message details" width={640}>
+      <Text size="sm" style={{ overflowWrap: 'anywhere' }}>Message ID: {message?.messageId ?? '—'}</Text>
       <Stack gap="xs">
         <Text size="sm" c="dimmed">Content Type: {message?.contentType ?? '—'}</Text>
         <Text size="sm" c="dimmed">Enqueued: {message?.enqueuedTime ? new Date(message.enqueuedTime).toLocaleString() : '—'}</Text>
@@ -40,13 +41,15 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
           onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
         />
       )}
-      <div style={{ height: 260, border: '1px solid var(--surface-border, #ddd)', borderRadius: 8, overflow: 'hidden' }}>
+      <Text fw={600} size="sm">Message body</Text>
+      <div>
         <MessageBodyEditor
           value={editing ? editBody : bodyValue}
           onChange={setEditBody}
           language="json"
           theme={theme}
           readOnly={!editing}
+          height={300}
         />
       </div>
 

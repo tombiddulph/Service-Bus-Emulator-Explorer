@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ActionIcon, Button, Checkbox, Group, Loader, Paper, Stack, Table, Text, Tooltip } from '@mantine/core'
-import { IconRefresh } from '@tabler/icons-react'
+import { Button, Checkbox, Group, Loader, ScrollArea, Stack, Table, Text, Tooltip } from '@mantine/core'
+import { IconPlayerPlay, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import EntityHeader from '../components/EntityHeader'
 import EntityOverviewCard from '../components/EntityOverviewCard'
@@ -23,7 +23,7 @@ import {
   useTopics,
   useReplayDlq,
 } from '../api/hooks'
-import type { MessageScope, MessageState, ReplayDlqResult, TopicInfo } from '../api/types'
+import type { MessageScope, MessageState, ReplayDlqResult } from '../api/types'
 import StatusPill from '../components/StatusPill'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../App'
@@ -34,12 +34,10 @@ const TopicDetailContent = () => {
   const navigate = useNavigate()
   const { theme } = useAppContext()
   const { data: topics, isLoading } = useTopics()
-  const topicList = (Array.isArray(topics) ? topics : topics ? Object.values(topics as any) : []) as TopicInfo[]
-  const topic = useMemo(() => topicList.find((t) => t.name === name), [topicList, name])
+  const topic = topics?.find(t => t.name === name)
 
   const { data: subs, refetch: refetchSubs } = useSubscriptions(name ?? '', true)
-  const subsList = (Array.isArray(subs) ? subs : subs ? Object.values(subs as any) : []) as typeof subs
-  const sub = useMemo(() => subsList?.find((s: any) => s.name === subscription), [subsList, subscription])
+  const sub = subs?.find(s => s.name === subscription)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
   const [skip, setSkip] = useState(0)
@@ -108,16 +106,19 @@ const TopicDetailContent = () => {
   if (!topic) return <Text>Topic not found.</Text>
 
   const renderSubscriptionList = () => (
-    <Paper withBorder radius="lg" p="md" shadow="sm" mt="sm" style={{ color: 'var(--mantine-color-text)' }}>
+    <section aria-label="Subscriptions">
       <Group justify="space-between" align="center" mb="sm">
         <Text fw={600}>Subscriptions</Text>
-        <Button onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
+        <Button variant="subtle" onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
       </Group>
+      <ScrollArea>
       <Table
-        verticalSpacing="sm"
+        className="portal-table"
+        miw={500}
+        verticalSpacing="xs"
         horizontalSpacing="md"
         highlightOnHover
-        withRowBorders={false}
+        withRowBorders
         styles={{ th: { color: 'inherit' }, td: { color: 'inherit' } }}
       >
         <Table.Thead>
@@ -132,7 +133,7 @@ const TopicDetailContent = () => {
         <Table.Tbody>
           {subs?.map((s) => (
             <Table.Tr key={s.name} style={{ cursor: 'pointer' }} onClick={() => navigate(`/topics/${name}/${s.name}`)}>
-              <Table.Td>{s.name}</Table.Td>
+              <Table.Td><button className="portal-link-button" onClick={event => { event.stopPropagation(); navigate(`/topics/${encodeURIComponent(name!)}/${encodeURIComponent(s.name)}`) }}>{s.name}</button></Table.Td>
               <Table.Td>
                 <StatusPill status={s.status} />
               </Table.Td>
@@ -155,7 +156,9 @@ const TopicDetailContent = () => {
           ))}
         </Table.Tbody>
       </Table>
-    </Paper>
+      </ScrollArea>
+      {subs?.length === 0 && <Text size="sm" c="dimmed" py="lg">No subscriptions yet.</Text>}
+    </section>
   )
 
   const showSubscriptionDetail = !!subscription && sub
@@ -197,21 +200,17 @@ const TopicDetailContent = () => {
             }}
             activeCount={sub?.activeMessageCount}
             deadLetterCount={sub?.deadLetterMessageCount}
+            activeCountIsExact={sub?.activeMessageCountIsExact}
+            deadLetterCountIsExact={sub?.deadLetterMessageCountIsExact}
           />
 
-          <Group justify="space-between" align="center">
-            <Group gap="xs">
-              <Text fw={600}>Messages</Text>
-              <Tooltip label="Refresh subscription messages">
-                <ActionIcon variant="light" aria-label="Refresh subscription messages" onClick={() => messages.refetch()} loading={messages.isFetching}>
-                  <IconRefresh size={16} />
-                </ActionIcon>
-              </Tooltip>
-            </Group>
+          <Group gap={4} className="portal-command-bar" role="toolbar" aria-label="Message commands">
+            <Button variant="subtle" leftSection={<IconRefresh size={16} />} loading={messages.isFetching} onClick={() => messages.refetch()}>Refresh messages</Button>
             {messageState === 'active' && (
               <Button
                 color="red"
-                variant="light"
+                variant="subtle"
+                leftSection={<IconTrash size={16} />}
                 disabled={purgeMessages.isPending || !sub?.activeMessageCount}
                 onClick={() => setPurgeTarget(messageScope)}
               >
@@ -226,7 +225,8 @@ const TopicDetailContent = () => {
                   onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
                 />
                 <Button
-                  color="teal"
+                  variant="subtle"
+                  leftSection={<IconPlayerPlay size={16} />}
                   disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
                   onClick={() =>
                     replayDlq.mutate(
@@ -246,6 +246,8 @@ const TopicDetailContent = () => {
                 </Button>
                 <Button
                   color="red"
+                  variant="subtle"
+                  leftSection={<IconTrash size={16} />}
                   disabled={selectedIds.length === 0 || bulkDelete.isPending}
                   onClick={() =>
                     bulkDelete.mutate(

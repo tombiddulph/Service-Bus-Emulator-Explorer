@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
-import { ActionIcon, Button, Group, Paper, ScrollArea, Table, Text, Tooltip } from '@mantine/core'
-import { IconPlus, IconRefresh } from '@tabler/icons-react'
+import { useState, type ReactNode } from 'react'
+import { Button, Group, Loader, ScrollArea, Table, Text, TextInput, Tooltip } from '@mantine/core'
+import { IconMessageDots, IconPlus, IconRefresh, IconSearch, IconTopologyStar } from '@tabler/icons-react'
 import type { EntityStatus } from '../api/types'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import StatusPill from './StatusPill'
@@ -82,40 +82,38 @@ const EntityTable = <T extends EntityRow>({
   onRowClick,
   emptyState,
 }: EntityTableProps<T>) => {
-  const list: T[] = Array.isArray(items) ? items : items ? Object.values(items as any) : []
+  const [filter, setFilter] = useState('')
+  const list = (items ?? []).filter(item => item.name.toLowerCase().includes(filter.toLowerCase()))
+  const Icon = title === 'Queues' ? IconMessageDots : IconTopologyStar
 
   return (
-    <Paper
-      withBorder
-      shadow="sm"
-      radius="lg"
-      p="md"
-      bg="var(--mantine-color-body)"
-      style={{ color: 'var(--mantine-color-text)' }}
-    >
-      <Group justify="space-between" align="center" mb="sm">
-        <Group gap={6} align="center">
-          <Tooltip label="Refresh">
-            <ActionIcon variant="light" color="gray" aria-label="Refresh" onClick={onRefresh} disabled={loading}>
-              <IconRefresh size={18} />
-            </ActionIcon>
-          </Tooltip>
-          <Text fw={700}>{title}</Text>
-        </Group>
+    <section aria-label={title}>
+      <div className="portal-resource-heading">
+        <Icon size={36} stroke={1.4} className="portal-resource-icon" />
+        <div><h1>{title}</h1><Text size="xs" c="dimmed">Service Bus · Emulator workspace</Text></div>
+      </div>
+      <div className="portal-command-bar" role="toolbar" aria-label={`${title} commands`}>
         {onCreate && (
-          <Button leftSection={<IconPlus size={16} />} onClick={onCreate} variant="light">
+          <Button leftSection={<IconPlus size={16} />} onClick={onCreate} variant="subtle">
             Create
           </Button>
         )}
+        {onRefresh && <Button variant="subtle" leftSection={<IconRefresh size={16} />} onClick={onRefresh} disabled={loading}>Refresh</Button>}
+      </div>
+      <Group my="md" gap="md">
+        <TextInput aria-label={`Filter ${title.toLowerCase()}`} placeholder="Filter by name" size="xs" w={280} maw="100%" leftSection={<IconSearch size={14} />} value={filter} onChange={e => setFilter(e.currentTarget.value)} />
+        <Text size="xs" c="dimmed">{list.length} of {items?.length ?? 0} items</Text>
+        {loading && <Loader size="xs" aria-label="Loading resources" />}
       </Group>
 
       <ScrollArea>
         <Table
+          className="portal-table"
           highlightOnHover
-          verticalSpacing="sm"
+          verticalSpacing="xs"
           horizontalSpacing="md"
           striped={false}
-          withRowBorders={false}
+          withRowBorders
           miw={600}
           styles={{ th: { color: 'inherit' }, td: { color: 'inherit' } }}
         >
@@ -134,7 +132,9 @@ const EntityTable = <T extends EntityRow>({
                 style={{ cursor: onRowClick ? 'pointer' : 'default' }}
               >
                 {columns.map((column) => (
-                  <Table.Td key={column.id}>{column.render(item)}</Table.Td>
+                  <Table.Td key={column.id}>{column.id === 'name' && onRowClick
+                    ? <button className="portal-link-button" onClick={event => { event.stopPropagation(); onRowClick(item) }}>{item.name}</button>
+                    : column.render(item)}</Table.Td>
                 ))}
               </Table.Tr>
             ))}
@@ -142,8 +142,8 @@ const EntityTable = <T extends EntityRow>({
         </Table>
       </ScrollArea>
 
-      {!loading && list.length === 0 && emptyState && <div style={{ marginTop: 12 }}>{emptyState}</div>}
-    </Paper>
+      {!loading && list.length === 0 && <div style={{ padding: '24px 0' }}>{filter ? <Text size="sm" c="dimmed">No resources match “{filter}”.</Text> : emptyState}</div>}
+    </section>
   )
 }
 

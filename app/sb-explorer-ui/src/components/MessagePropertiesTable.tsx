@@ -1,4 +1,4 @@
-import { Card, Divider, Group, ScrollArea, Table, Text } from '@mantine/core'
+import { Group, ScrollArea, Table, Text } from '@mantine/core'
 
 interface PropsTableProps {
   title: string
@@ -9,13 +9,12 @@ const MessagePropertiesTable = ({ title, data }: PropsTableProps) => {
   const entries = data ? Object.entries(data) : []
 
   return (
-    <Card withBorder radius="md" padding="sm" bg="var(--mantine-color-body)">
+    <section aria-label={title}>
       <Group justify="space-between" align="center" mb="xs">
         <Text fw={600}>{title}</Text>
       </Group>
-      <Divider mb="xs" />
-      <ScrollArea h={200} type="hover">
-        <Table striped={false} highlightOnHover withRowBorders={false} verticalSpacing="xs" horizontalSpacing="sm">
+      <ScrollArea.Autosize mah={240} type="auto">
+        <Table className="portal-table" striped={false} highlightOnHover withRowBorders verticalSpacing="xs" horizontalSpacing="sm">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>Key</Table.Th>
@@ -35,18 +34,18 @@ const MessagePropertiesTable = ({ title, data }: PropsTableProps) => {
               entries.map(([k, v]) => (
                 <Table.Tr key={k}>
                   <Table.Td>
-                    <Text fw={600}>{k}</Text>
+                    <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{k}</Text>
                   </Table.Td>
                   <Table.Td>
-                    <Text>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</Text>
+                    <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</Text>
                   </Table.Td>
                 </Table.Tr>
               ))
             )}
           </Table.Tbody>
         </Table>
-      </ScrollArea>
-    </Card>
+      </ScrollArea.Autosize>
+    </section>
   )
 }
 
