@@ -73,11 +73,27 @@ export interface CountResult {
   notFound?: string[]
 }
 
+export interface DeleteMessageOutcome {
+  messageId: string
+  deleted: boolean
+  error?: string
+}
+
+export interface DeleteDlqResult {
+  count: number
+  status: 'completed' | 'partial' | 'timedOut' | 'failed'
+  isPartial: boolean
+  outcomes: DeleteMessageOutcome[]
+  notFound?: string[]
+  error?: string
+}
+
 export interface ReplayMessageOutcome {
   messageId: string
   sent: boolean
   removedFromDlq: boolean
   error?: string
+  sendOutcomeUnknown?: boolean
 }
 
 export interface ReplayDlqResult {

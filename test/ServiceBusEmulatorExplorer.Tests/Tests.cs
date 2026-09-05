@@ -309,7 +309,7 @@ public class Tests : TestBase
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
-        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        var result = await response.Content.ReadFromJsonAsync<DeleteDlqResult>();
         await Assert.That(result).IsNotNull();
         await Assert.That(result!.Count).IsEqualTo(1);
         await Assert.That(result.NotFound).IsNull();
@@ -334,15 +334,76 @@ public class Tests : TestBase
             messageIds = new[] { "keep-me", "this-id-does-not-exist" }
         });
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((int)response.StatusCode).IsEqualTo(207);
 
-        var result = await response.Content.ReadFromJsonAsync<CountResult>();
+        var result = await response.Content.ReadFromJsonAsync<DeleteDlqResult>();
         await Assert.That(result).IsNotNull();
         await Assert.That(result!.Count).IsEqualTo(1);
         await Assert.That(result.NotFound).IsNotNull();
         await Assert.That(result.NotFound).Contains("this-id-does-not-exist");
 
         await Assert.That(serviceBusClient.GetDeadLetterMessages(entityPath)).IsEmpty();
+    }
+
+    [Test]
+    public async Task DeleteAllQueueDlqReturnsConfirmedCount()
+    {
+        const string queueName = "delete-all-count-queue";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, "one", "body");
+        serviceBusClient.AddDeadLetterMessage(queueName, "two", "body");
+
+        var response = await Factory.CreateClient().PostAsync($"/api/deadletter/queue/{queueName}/delete", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<DeleteDlqResult>();
+        await Assert.That(result!.Count).IsEqualTo(2);
+        await Assert.That(result.Status).IsEqualTo(DlqDeleteStatus.Completed);
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).IsEmpty();
+    }
+
+    [Test]
+    public async Task SelectedDeleteReportsSettlementFailureAndKeepsMessage()
+    {
+        const string queueName = "delete-settlement-failure-queue";
+        const string messageId = "cannot-delete";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "body");
+        serviceBusClient.FailCompleteForMessageId = messageId;
+
+        var response = await Factory.CreateClient().PostAsJsonAsync($"/api/deadletter/queue/{queueName}/delete",
+            new { messageIds = new[] { messageId } });
+
+        await Assert.That((int)response.StatusCode).IsEqualTo(207);
+        var result = await response.Content.ReadFromJsonAsync<DeleteDlqResult>();
+        await Assert.That(result!.Count).IsEqualTo(0);
+        await Assert.That(result.IsPartial).IsTrue();
+        await Assert.That(result.Outcomes.Single().Deleted).IsFalse();
+        await Assert.That(result.Outcomes.Single().Error).IsNotEmpty();
+        await Assert.That(serviceBusClient.GetDeadLetterMessages(queueName)).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task SelectedDeleteHoldsLockUntilFailedMessageIsReleased()
+    {
+        const string queueName = "delete-cleanup-lock-queue";
+        const string messageId = "blocked-delete-abandon";
+        var serviceBusClient = (TestServiceBusClient)Factory.Services.GetRequiredService<ServiceBusClient>();
+        serviceBusClient.AddDeadLetterMessage(queueName, messageId, "body");
+        serviceBusClient.FailCompleteForMessageId = messageId;
+        serviceBusClient.BlockAbandonForMessageId = messageId;
+        var client = Factory.CreateClient();
+
+        var deletion = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/delete", new { messageIds = new[] { messageId } });
+        await serviceBusClient.AbandonStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        serviceBusClient.FailCompleteForMessageId = null;
+        var replay = client.PostAsJsonAsync($"/api/deadletter/queue/{queueName}/replay", new { messageIds = new[] { messageId } });
+
+        await Task.Delay(100);
+        await Assert.That(replay.IsCompleted).IsFalse();
+        serviceBusClient.AllowAbandon.TrySetResult();
+        await Assert.That((int)(await deletion).StatusCode).IsEqualTo(207);
+        await Assert.That((await replay).StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]

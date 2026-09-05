@@ -136,6 +136,21 @@ public record ReplayDlqRequest(
 
 public record CountResult(int Count, List<string>? NotFound = null);
 
+[JsonConverter(typeof(JsonStringEnumConverter<DlqDeleteStatus>))]
+public enum DlqDeleteStatus { Completed, Partial, TimedOut, Failed }
+
+public record DeleteMessageOutcome(string MessageId, bool Deleted, string? Error = null);
+
+public record DeleteDlqResult(
+    int Count,
+    DlqDeleteStatus Status,
+    List<DeleteMessageOutcome> Outcomes,
+    List<string>? NotFound = null,
+    string? Error = null)
+{
+    public bool IsPartial => Status != DlqDeleteStatus.Completed;
+}
+
 public record ReplayDlqResult(
     int Count,
     bool IsPartial,
@@ -148,5 +163,6 @@ public record ReplayMessageOutcome(
     string MessageId,
     bool Sent,
     bool RemovedFromDlq,
-    string? Error = null
+    string? Error = null,
+    bool SendOutcomeUnknown = false
 );

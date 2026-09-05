@@ -28,6 +28,7 @@ import StatusPill from '../components/StatusPill'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../App'
 import { summarizeReplayResult } from '../utils/replayResult'
+import { summarizeDeleteResult } from '../utils/deleteResult'
 
 const TopicDetailContent = () => {
   const { name, subscription } = useParams()
@@ -71,6 +72,7 @@ const TopicDetailContent = () => {
   const deleteSubscription = useDeleteSubscription(name ?? '')
   const deleteTopic = useDeleteTopic()
   const purgeMessages = usePurgeMessages()
+  const dlqOperationPending = replayDlq.isPending || bulkDelete.isPending
 
   const inspectingMessage = messages?.data?.items?.find((m) => m.messageId === inspect)
 
@@ -227,7 +229,7 @@ const TopicDetailContent = () => {
                 <Button
                   variant="subtle"
                   leftSection={<IconPlayerPlay size={16} />}
-                  disabled={replayDlq.isPending || (selectedIds.length === 0 && !messages.data?.items.length)}
+                  disabled={dlqOperationPending || (selectedIds.length === 0 && !messages.data?.items.length)}
                   onClick={() =>
                     replayDlq.mutate(
                       { scope: messageScope, messageIds: selectedIds.length ? selectedIds : undefined, removeFromDlq },
@@ -248,19 +250,15 @@ const TopicDetailContent = () => {
                   color="red"
                   variant="subtle"
                   leftSection={<IconTrash size={16} />}
-                  disabled={selectedIds.length === 0 || bulkDelete.isPending}
+                  disabled={selectedIds.length === 0 || dlqOperationPending}
                   onClick={() =>
                     bulkDelete.mutate(
                       { scope: { type: 'subscription', topic: name, subscription }, messageIds: selectedIds },
                       {
                         onSuccess: (result) => {
-                          const notFoundCount = result.notFound?.length ?? 0
-                          notifications.show({
-                            title: 'DLQ cleared',
-                            message: `Deleted ${result.count} message${result.count === 1 ? '' : 's'}.${notFoundCount ? ` ${notFoundCount} message${notFoundCount === 1 ? '' : 's'} not found.` : ''}`,
-                            color: notFoundCount ? 'yellow' : 'green',
-                          })
-                          setSelectedIds([])
+                          const summary = summarizeDeleteResult(result)
+                          notifications.show(summary)
+                          setSelectedIds(summary.retryIds)
                         },
                         onError: (error) => {
                           notifications.show({ title: 'DLQ delete failed', message: error instanceof Error ? error.message : 'Unable to delete DLQ messages.', color: 'red' })
@@ -299,6 +297,7 @@ const TopicDetailContent = () => {
           open={!!inspect}
           onOpenChange={(open) => !open && setInspect(undefined)}
           editable={messageState === 'deadletter'}
+          pending={dlqOperationPending}
           onSaveAndRequeue={(body, removeFromDlq) => {
             const messageId = inspectingMessage.messageId
             replayDlq.mutate(

@@ -1,6 +1,7 @@
 import axios, { type AxiosAdapter, type AxiosRequestConfig } from "axios";
 import type {
   MessageInfo,
+  DeleteDlqResult,
   MessageScope,
   MessageState,
   PagedResult,
@@ -398,9 +399,15 @@ const mockAdapter: AxiosAdapter = async (config) => {
   }
 
   if (useMockDlq && method === "post" && path?.endsWith("/delete")) {
-    // Retain the lightweight CountResult behavior for mock deletes.
     const payload = typeof data === "string" ? JSON.parse(data) : data;
-    return respond({ count: payload?.messageIds?.length ?? 0, notFound: [] }, config);
+    const messageIds: string[] = payload?.messageIds ?? [];
+    return respond<DeleteDlqResult>({
+      count: messageIds.length,
+      status: "completed",
+      isPartial: false,
+      outcomes: messageIds.map((messageId) => ({ messageId, deleted: true })),
+      notFound: [],
+    }, config);
   }
 
   const { adapter, ...configWithoutAdapter } = config;
