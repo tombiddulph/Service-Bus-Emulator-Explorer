@@ -1,0 +1,182 @@
+name: Publish beta image
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch in this repository to test and publish (for example fix/purge-receiver-lifetime)'
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      branchTag: ${{ steps.source.outputs.branchTag }}
+      betaVersion: ${{ steps.version.outputs.betaVersion }}
+      majorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve repository branch
+        id: source
+        env:
+          TARGET_BRANCH: ${{ inputs.branch }}
+        run: |
+          git check-ref-format "refs/heads/$TARGET_BRANCH"
+          sha=$(git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')
+          test -n "$sha"
+          slug=$(printf '%s' "$TARGET_BRANCH" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40)
+          branch_hash=$(printf '%s' "$TARGET_BRANCH" | sha256sum | cut -c1-8)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "branchTag=beta-${slug:-branch}-$branch_hash" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout resolved commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.7.0
+        with:
+          versionSpec: '6.x'
+
+      - name: Determine base version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.7.0
+        with:
+          configFilePath: GitVersion.yml
+
+      - name: Set beta version
+        id: version
+        env:
+          BASE_VERSION: ${{ steps.gitversion.outputs.majorMinorPatch }}
+        run: echo "betaVersion=$BASE_VERSION-beta.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: version
+    steps:
+      - name: Checkout resolved commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/sb-explorer-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: app/sb-explorer-ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: app/sb-explorer-ui
+        run: npm run build
+
+      - name: Restore .NET dependencies
+        run: dotnet restore -r linux-musl-x64
+
+      - name: Build .NET solution
+        env:
+          BASE_VERSION: ${{ needs.version.outputs.majorMinorPatch }}
+          BETA_VERSION: ${{ needs.version.outputs.betaVersion }}
+        run: |
+          dotnet build --no-restore --configuration Release \
+            -p:Version="$BASE_VERSION" \
+            -p:AssemblyVersion="$BASE_VERSION.0" \
+            -p:FileVersion="$BASE_VERSION.0" \
+            -p:InformationalVersion="$BETA_VERSION"
+
+      - name: Run tests
+        run: dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [version, build-and-test]
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: beta-image-${{ inputs.branch }}
+      cancel-in-progress: false
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+
+      - name: Lowercase image name
+        id: image
+        run: echo "name=${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push beta image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/ServiceBusEmulatorExplorer/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ needs.version.outputs.betaVersion }}
+            ASSEMBLY_VERSION=${{ needs.version.outputs.majorMinorPatch }}.0
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.version.outputs.betaVersion }}
+            ${{ steps.image.outputs.name }}:${{ needs.version.outputs.branchTag }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.betaVersion }}
+            org.opencontainers.image.revision=${{ needs.version.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=beta
+          cache-to: type=gha,scope=beta,mode=max
+
+      - name: Show beta image details
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          BETA_VERSION: ${{ needs.version.outputs.betaVersion }}
+          BRANCH_TAG: ${{ needs.version.outputs.branchTag }}
+          SOURCE_SHA: ${{ needs.version.outputs.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo '## Published beta image'
+            echo "Commit: \`$SOURCE_SHA\`"
+            echo "Version tag: \`$IMAGE:$BETA_VERSION\`"
+            echo "Branch tag (updated by subsequent publications): \`$IMAGE:$BRANCH_TAG\`"
+            echo '```bash'
+            echo "docker pull $IMAGE:$BETA_VERSION"
+            echo "docker pull $IMAGE@$DIGEST"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

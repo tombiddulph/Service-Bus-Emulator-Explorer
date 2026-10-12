@@ -84,6 +84,25 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
    - API: <http://localhost:8080/api>
    - API Documentation: <http://localhost:8080/scalar/v1>
 
+### Publishing beta Docker images
+
+Repository maintainers with write access can publish an image from an existing branch:
+
+1. Open **Actions → Publish beta image → Run workflow**.
+2. Leave the workflow's **Use workflow from** selection on `main`, and enter the source branch in the **branch** input (for example `fix/purge-receiver-lifetime`). The source branch does not need to contain the beta workflow.
+3. The workflow resolves the branch to a commit, runs the frontend build and backend tests, then publishes that same commit to `ghcr.io/tombiddulph/service-bus-emulator-explorer`.
+4. Copy the `docker pull` command from the workflow run's summary.
+
+Each publication creates a unique version tag such as `1.2.3-beta.12.1` and updates a branch-specific tag such as `beta-fix-purge-receiver-lifetime-<branch-hash>`. The branch hash prevents collisions between similar branch names. The summary also includes a digest-pinned pull command. Beta publications never update `latest` or stable version tags.
+
+Alternatively, using GitHub CLI:
+
+```bash
+gh workflow run beta.yml --ref main -f branch=fix/purge-receiver-lifetime
+```
+
+Only branches in this repository are accepted, not tags, commit IDs, or fork branches. Review branch code before publishing: builds execute the selected branch's scripts and Dockerfile. Ordinary branch pushes and PRs do not publish beta images.
+
 ### Local Development Setup
 
 For the complete bundled frontend and backend workflow, including `.env` configuration, see [Run Locally With .env](RUN_LOCAL.md).
