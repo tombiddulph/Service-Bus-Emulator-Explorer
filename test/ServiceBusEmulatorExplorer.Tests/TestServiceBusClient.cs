@@ -16,6 +16,12 @@ public class TestServiceBusClient : ServiceBusClient
     private readonly Dictionary<string, TestServiceBusSender> _senders = [];
     private readonly Dictionary<string, List<ServiceBusReceivedMessage>> _deadLetterMessages = [];
     private readonly Dictionary<string, PurgeReceiverBehavior> _purgeBehaviors = [];
+    public List<TestServiceBusReceiver> CreatedReceivers { get; } = [];
+    public bool BlockReceiveAndDeleteDispose { get; set; }
+    public bool FailReceiverCreation { get; set; }
+    public bool FailReceiveAndDeleteDispose { get; set; }
+    public TaskCompletionSource ReceiverDisposeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource AllowReceiverDispose { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Test hook: makes CompleteMessageAsync simulate a cancelled/timed-out settlement for this message id.
     public string? FailCompleteForMessageId { get; set; }
@@ -34,15 +40,24 @@ public class TestServiceBusClient : ServiceBusClient
     public Action<int>? ActiveBatchReceived { get; set; }
 
     public void AddActiveMessage(string entityPath, string messageId, string body)
+        => AddActiveMessage(entityPath, new ServiceBusMessage(body) { MessageId = messageId });
+
+    private void AddActiveMessage(string entityPath, ServiceBusMessage message)
     {
+        if (ConsumeOutstandingCredit(entityPath, isDeadLetter: false)) return;
         if (!_senders.TryGetValue(entityPath, out var sender))
         {
             sender = new TestServiceBusSender(entityPath, this);
             _senders[entityPath] = sender;
         }
 
-        sender.Messages.Add(new ServiceBusMessage(body) { MessageId = messageId });
+        sender.Messages.Add(message);
     }
+
+    // A ReceiveAndDelete AMQP link can retain credit after an empty receive or timeout.
+    // Model delivery to that idle link, rather than only deleting during explicit receives.
+    private bool ConsumeOutstandingCredit(string entityPath, bool isDeadLetter) =>
+        CreatedReceivers.Any(receiver => receiver.TryConsumeOutstandingCredit(entityPath, isDeadLetter));
 
     public void ConfigurePurgeReceiver(
         string entityPath,
@@ -69,10 +84,12 @@ public class TestServiceBusClient : ServiceBusClient
     public override ServiceBusReceiver CreateReceiver(string queueName,
         ServiceBusReceiverOptions receiverOptions = null)
     {
+        if (FailReceiverCreation) throw new InvalidOperationException("Simulated receiver creation failure");
         var isDeadLetter = receiverOptions?.SubQueue == SubQueue.DeadLetter;
         var receiveAndDelete = receiverOptions?.ReceiveMode == ServiceBusReceiveMode.ReceiveAndDelete;
         if (isDeadLetter) LastCreatedDeadLetterReceiverUsesReceiveAndDelete = receiveAndDelete;
         var receiver = new TestServiceBusReceiver(queueName, this, isDeadLetter, receiveAndDelete);
+        CreatedReceivers.Add(receiver);
         _queueReceivers[queueName] = receiver;
 
         return receiver;
@@ -81,11 +98,13 @@ public class TestServiceBusClient : ServiceBusClient
     public override ServiceBusReceiver CreateReceiver(string topicName, string subscriptionName,
         ServiceBusReceiverOptions options)
     {
+        if (FailReceiverCreation) throw new InvalidOperationException("Simulated receiver creation failure");
         var key = $"{topicName}/Subscriptions/{subscriptionName}";
         var isDeadLetter = options.SubQueue == SubQueue.DeadLetter;
         var receiveAndDelete = options.ReceiveMode == ServiceBusReceiveMode.ReceiveAndDelete;
         if (isDeadLetter) LastCreatedDeadLetterReceiverUsesReceiveAndDelete = receiveAndDelete;
         var receiver = new TestServiceBusReceiver(key, this, isDeadLetter, receiveAndDelete);
+        CreatedReceivers.Add(receiver);
         _topicReceivers[key] = receiver;
 
         return receiver;
@@ -95,6 +114,7 @@ public class TestServiceBusClient : ServiceBusClient
         IDictionary<string, object>? applicationProperties = null, string? partitionKey = null, string? sessionId = null,
         TimeSpan? timeToLive = null, string? correlationId = null, string? subject = null, string? replyTo = null)
     {
+        if (ConsumeOutstandingCredit(entityPath, isDeadLetter: true)) return;
         if (!_deadLetterMessages.TryGetValue(entityPath, out var messages))
         {
             messages = [];
@@ -146,7 +166,7 @@ public class TestServiceBusClient : ServiceBusClient
         {
             if (client.SendDelay is { } delay)
                 await Task.Delay(delay, cancellationToken);
-            Messages.Add(message);
+            client.AddActiveMessage(entityPath, message);
         }
 
         public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -157,6 +177,18 @@ public class TestServiceBusClient : ServiceBusClient
         private readonly HashSet<long> _locked = [];
         private readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTimeOffset> _lockedUntil = [];
         private int _deadLetterReceiveCalls;
+        private int _outstandingCredit;
+        public bool IsDisposed { get; private set; }
+        public bool UsesReceiveAndDelete => receiveAndDelete;
+        public override bool IsClosed => IsDisposed;
+
+        internal bool TryConsumeOutstandingCredit(string path, bool isDeadLetter)
+        {
+            if (IsDisposed || !receiveAndDelete || entityPath != path || isDeadLetterReceiver != isDeadLetter || _outstandingCredit == 0)
+                return false;
+            _outstandingCredit--;
+            return true;
+        }
 
         public override string EntityPath => entityPath;
 
@@ -212,6 +244,8 @@ public class TestServiceBusClient : ServiceBusClient
         public override async Task<IReadOnlyList<ServiceBusReceivedMessage>> ReceiveMessagesAsync(int maxMessages,
             TimeSpan? maxWaitTime = null, CancellationToken cancellationToken = new())
         {
+            if (IsDisposed) throw new ObjectDisposedException(nameof(TestServiceBusReceiver));
+            if (receiveAndDelete) _outstandingCredit = maxMessages;
             if (!isDeadLetterReceiver)
             {
                 var behavior = client._purgeBehaviors.GetValueOrDefault(entityPath);
@@ -239,6 +273,7 @@ public class TestServiceBusClient : ServiceBusClient
                     .ToList();
 
                 sender.Messages.RemoveRange(0, activeMessages.Count);
+                if (receiveAndDelete) _outstandingCredit -= activeMessages.Count;
                 client.ActiveBatchReceived?.Invoke(activeMessages.Count);
                 return activeMessages;
             }
@@ -263,6 +298,7 @@ public class TestServiceBusClient : ServiceBusClient
             if (receiveAndDelete)
             {
                 foreach (var message in messages) DeadLetterMessages.Remove(message);
+                _outstandingCredit -= messages.Count;
             }
 
             return messages;
@@ -338,7 +374,18 @@ public class TestServiceBusClient : ServiceBusClient
             _lockedUntil.TryRemove(message.SequenceNumber, out _);
         }
 
-        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public override async ValueTask DisposeAsync()
+        {
+            if (receiveAndDelete && client.BlockReceiveAndDeleteDispose)
+            {
+                client.ReceiverDisposeStarted.TrySetResult();
+                await client.AllowReceiverDispose.Task;
+            }
+            IsDisposed = true;
+            _outstandingCredit = 0;
+            if (receiveAndDelete && client.FailReceiveAndDeleteDispose)
+                throw new InvalidOperationException("Simulated receiver disposal failure");
+        }
     }
 }
 

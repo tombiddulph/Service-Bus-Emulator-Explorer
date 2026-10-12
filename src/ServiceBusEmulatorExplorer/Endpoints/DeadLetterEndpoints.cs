@@ -43,7 +43,8 @@ public static class DeadLetterEndpoints
 
     private static Task<IResult> BulkDeleteQueueDlq(string name, ServiceBusEndpointCache cache, IOptions<DlqOperationOptions> options,
         BulkDlqDeleteRequest? request = null) =>
-        BulkDeleteDlq(cache, receiverOptions => cache.GetReceiver(name, receiverOptions), request, options.Value);
+        BulkDeleteDlq(cache, receiverOptions => cache.GetReceiver(name, receiverOptions),
+            (receiverOptions, token) => cache.CreateReceiverScopeAsync(name, receiverOptions, token), request, options.Value);
 
     private static Task<IResult> BulkDeleteSubscriptionDlq(
         string topic,
@@ -51,11 +52,13 @@ public static class DeadLetterEndpoints
         ServiceBusEndpointCache cache,
         IOptions<DlqOperationOptions> options,
         BulkDlqDeleteRequest? request = null) =>
-        BulkDeleteDlq(cache, receiverOptions => cache.GetTopicReceiver(topic, sub, receiverOptions), request, options.Value);
+        BulkDeleteDlq(cache, receiverOptions => cache.GetTopicReceiver(topic, sub, receiverOptions),
+            (receiverOptions, token) => cache.CreateTopicReceiverScopeAsync(topic, sub, receiverOptions, token), request, options.Value);
 
     private static async Task<IResult> BulkDeleteDlq(
         ServiceBusEndpointCache cache,
         Func<ServiceBusReceiverOptions, ServiceBusReceiver> receiverFactory,
+        Func<ServiceBusReceiverOptions, CancellationToken, Task<ServiceBusEndpointCache.ReceiverScope>> receiverScopeFactory,
         BulkDlqDeleteRequest? request,
         DlqOperationOptions options)
     {
@@ -63,17 +66,16 @@ public static class DeadLetterEndpoints
 
         if (request?.MessageIds is not { Count: > 0 } requestedIds)
         {
-            var purgeReceiver = receiverFactory(new()
-            {
-                SubQueue = SubQueue.DeadLetter,
-                ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
-            });
-
             var removed = 0;
             string? error = null;
             try
             {
-                await using var _ = await cache.LockAsync(purgeReceiver, cts.Token);
+                await using var scope = await receiverScopeFactory(new()
+                {
+                    SubQueue = SubQueue.DeadLetter,
+                    ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
+                }, cts.Token);
+                var purgeReceiver = scope.Receiver;
                 while (true)
                 {
                     var batch = await purgeReceiver.ReceiveMessagesAsync(100, TimeSpan.FromSeconds(1), cts.Token);
