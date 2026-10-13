@@ -26,7 +26,7 @@ import {
 import type { MessageScope, MessageState, ReplayDlqResult } from '../api/types'
 import StatusPill from '../components/StatusPill'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
-import { useAppContext } from '../App'
+import { useAppContext } from '../AppContext'
 import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
 

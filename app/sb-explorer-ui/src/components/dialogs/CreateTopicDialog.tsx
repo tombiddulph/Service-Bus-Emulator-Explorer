@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Button, Group, Modal, Stack, TextInput, Title } from '@mantine/core'
 
 interface CreateTopicDialogProps {
@@ -7,12 +7,8 @@ interface CreateTopicDialogProps {
   onSubmit: (payload: { name: string }) => void
 }
 
-const CreateTopicDialog = ({ open, onOpenChange, onSubmit }: CreateTopicDialogProps) => {
+const CreateTopicForm = ({ onOpenChange, onSubmit }: Omit<CreateTopicDialogProps, 'open'>) => {
   const [name, setName] = useState('')
-
-  useEffect(() => {
-    if (!open) setName('')
-  }, [open])
 
   const handleSubmit = () => {
     if (!name) return
@@ -20,20 +16,24 @@ const CreateTopicDialog = ({ open, onOpenChange, onSubmit }: CreateTopicDialogPr
   }
 
   return (
-    <Modal opened={open} onClose={() => onOpenChange(false)} title={<Title order={4}>Create topic</Title>} centered>
-      <Stack gap="sm">
-        <TextInput label="Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus />
-        <Group justify="flex-end" mt="sm">
-          <Button variant="default" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} disabled={!name}>
-            Create
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+    <Stack gap="sm">
+      <TextInput label="Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus />
+      <Group justify="flex-end" mt="sm">
+        <Button variant="default" onClick={() => onOpenChange(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} disabled={!name}>
+          Create
+        </Button>
+      </Group>
+    </Stack>
   )
 }
+
+const CreateTopicDialog = ({ open, onOpenChange, onSubmit }: CreateTopicDialogProps) => (
+  <Modal opened={open} onClose={() => onOpenChange(false)} title={<Title order={4}>Create topic</Title>} centered>
+    <CreateTopicForm key={String(open)} onOpenChange={onOpenChange} onSubmit={onSubmit} />
+  </Modal>
+)
 
 export default CreateTopicDialog

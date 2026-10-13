@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
@@ -9,21 +9,7 @@ import Topics from './routes/Topics'
 import TopicDetail from './routes/TopicDetail'
 import AppError from './components/AppError'
 import { mantineLight, mantineDark } from './theme'
-
-type ColorScheme = 'light' | 'dark'
-
-interface AppContextValue {
-  theme: ColorScheme
-  toggleTheme: () => void
-}
-
-const AppContext = createContext<AppContextValue | undefined>(undefined)
-
-export const useAppContext = () => {
-  const value = useContext(AppContext)
-  if (!value) throw new Error('useAppContext must be used within App')
-  return value
-}
+import { AppContext, type ColorScheme } from './AppContext'
 
 function App() {
   const [theme, setTheme] = useState<ColorScheme>(() => (localStorage.getItem('sbx-theme') as ColorScheme) || 'light')

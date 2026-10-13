@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Button, Group, Modal, NumberInput, Stack, TextInput, Title } from '@mantine/core'
 
 interface CreateQueueDialogProps {
@@ -23,22 +23,12 @@ const parseTimeSpan = (value: string) => {
   return days * 86400 + hrs * 3600 + mins * 60 + secs
 }
 
-const CreateQueueDialog = ({ open, onOpenChange, onSubmit }: CreateQueueDialogProps) => {
+const CreateQueueForm = ({ onOpenChange, onSubmit }: Omit<CreateQueueDialogProps, 'open'>) => {
   const [name, setName] = useState('')
   const [maxDeliveryCount, setMaxDeliveryCount] = useState('10')
   const [lockDuration, setLockDuration] = useState('00:01:00')
   const [defaultTtl, setDefaultTtl] = useState('01:00:00')
   const [defaultTtlError, setDefaultTtlError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!open) {
-      setName('')
-      setMaxDeliveryCount('10')
-      setLockDuration('00:01:00')
-      setDefaultTtl('01:00:00')
-      setDefaultTtlError(null)
-    }
-  }, [open])
 
   const handleSubmit = () => {
     if (!name) return
@@ -61,38 +51,42 @@ const CreateQueueDialog = ({ open, onOpenChange, onSubmit }: CreateQueueDialogPr
   }
 
   return (
-    <Modal opened={open} onClose={() => onOpenChange(false)} title={<Title order={4}>Create queue</Title>} centered>
-      <Stack gap="sm">
-        <TextInput label="Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus />
-        <NumberInput
-          label="Max delivery count"
-          description="Number of deliveries before DLQ"
-          value={maxDeliveryCount}
-          onChange={(value) => setMaxDeliveryCount(String(value ?? ''))}
-          min={1}
-        />
-        <TextInput label="Lock duration (hh:mm:ss)" value={lockDuration} onChange={(e) => setLockDuration(e.currentTarget.value)} />
-        <TextInput
-          label="Default TTL (hh:mm:ss)"
-          description="Max 01:00:00"
-          value={defaultTtl}
-          onChange={(e) => {
-            setDefaultTtl(e.currentTarget.value)
-            if (defaultTtlError) setDefaultTtlError(null)
-          }}
-          error={defaultTtlError}
-        />
-        <Group justify="flex-end" mt="sm">
-          <Button variant="default" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} disabled={!name}>
-            Create
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+    <Stack gap="sm">
+      <TextInput label="Name" required value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus />
+      <NumberInput
+        label="Max delivery count"
+        description="Number of deliveries before DLQ"
+        value={maxDeliveryCount}
+        onChange={(value) => setMaxDeliveryCount(String(value ?? ''))}
+        min={1}
+      />
+      <TextInput label="Lock duration (hh:mm:ss)" value={lockDuration} onChange={(e) => setLockDuration(e.currentTarget.value)} />
+      <TextInput
+        label="Default TTL (hh:mm:ss)"
+        description="Max 01:00:00"
+        value={defaultTtl}
+        onChange={(e) => {
+          setDefaultTtl(e.currentTarget.value)
+          if (defaultTtlError) setDefaultTtlError(null)
+        }}
+        error={defaultTtlError}
+      />
+      <Group justify="flex-end" mt="sm">
+        <Button variant="default" onClick={() => onOpenChange(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} disabled={!name}>
+          Create
+        </Button>
+      </Group>
+    </Stack>
   )
 }
+
+const CreateQueueDialog = ({ open, onOpenChange, onSubmit }: CreateQueueDialogProps) => (
+  <Modal opened={open} onClose={() => onOpenChange(false)} title={<Title order={4}>Create queue</Title>} centered>
+    <CreateQueueForm key={String(open)} onOpenChange={onOpenChange} onSubmit={onSubmit} />
+  </Modal>
+)
 
 export default CreateQueueDialog
