@@ -5,7 +5,7 @@ import { ActionIcon, Anchor, AppShell as MantineAppShell, Badge, Breadcrumbs, Gr
 import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMenu2, IconMoon, IconRefresh, IconSun, IconTopologyStar } from '@tabler/icons-react'
 import NavTree from '../components/NavTree'
 import MockBanner from '../components/MockBanner'
-import { useAppContext } from '../App'
+import { useAppContext } from '../AppContext'
 import { useEnvironment } from '../api/hooks'
 
 function AppShell() {

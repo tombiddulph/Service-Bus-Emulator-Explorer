@@ -20,7 +20,7 @@ import {
   useSendMessage,
 } from '../api/hooks'
 import type { MessageScope, MessageState, ReplayDlqResult } from '../api/types'
-import { useAppContext } from '../App'
+import { useAppContext } from '../AppContext'
 import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
 

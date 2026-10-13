@@ -1,4 +1,4 @@
-import axios, { type AxiosAdapter, type AxiosRequestConfig } from "axios";
+import axios, { type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
 import type {
   MessageInfo,
   DeleteDlqResult,
@@ -76,7 +76,7 @@ export const purgePath = (scope: MessageScope) => {
   return `/topics/${scope.topic}/subscriptions/${scope.subscription}/purge`;
 };
 
-const respond = <T>(data: T, config: AxiosRequestConfig) =>
+const respond = <T>(data: T, config: InternalAxiosRequestConfig): Promise<AxiosResponse<T>> =>
   Promise.resolve({
     data,
     status: 200,
@@ -84,7 +84,7 @@ const respond = <T>(data: T, config: AxiosRequestConfig) =>
     headers: config.headers ?? {},
     config,
     request: {},
-  } as any);
+  });
 
 // no explicit notFound; fall through to real adapter when not mocking
 
@@ -410,12 +410,11 @@ const mockAdapter: AxiosAdapter = async (config) => {
     }, config);
   }
 
-  const { adapter, ...configWithoutAdapter } = config;
-  return axios.request(configWithoutAdapter);
+  return axios.request({ ...config, adapter: axios.defaults.adapter });
 };
 
 export const apiClient = axios.create({
   baseURL,
   timeout: 12000,
-  adapter: anyMockEnabled ? (config) => mockAdapter(config as any) : undefined,
+  adapter: anyMockEnabled ? mockAdapter : undefined,
 });

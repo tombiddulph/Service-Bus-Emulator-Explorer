@@ -8,7 +8,7 @@ namespace ServiceBusEmulatorExplorer.Extensions;
 
 public static class BuilderExtensions
 {
-    public static IHostApplicationBuilder AddOpenTelemetry(this IHostApplicationBuilder builder)
+    public static IHostApplicationBuilder AddExplorerOpenTelemetry(this IHostApplicationBuilder builder)
     {
         var resourceBuilder = ResourceBuilder
             .CreateDefault()

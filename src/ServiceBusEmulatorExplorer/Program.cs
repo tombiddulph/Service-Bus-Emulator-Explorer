@@ -32,7 +32,7 @@ builder.Services
     })
     .AddExceptionHandler<ServiceBusExceptionHandler>();
 
-builder.AddOpenTelemetry();
+builder.AddExplorerOpenTelemetry();
 
 builder.Services.AddHealthChecks();
 

@@ -3,7 +3,7 @@ import { Button, Checkbox, Divider, Group, Stack, Text } from '@mantine/core'
 import type { MessageInfo } from '../api/types'
 import MessageBodyEditor from './MessageBodyEditor'
 import MessagePropertiesTable from './MessagePropertiesTable'
-import { useAppContext } from '../App'
+import { useAppContext } from '../AppContext'
 import SideDrawer from './SideDrawer'
 
 interface MessageDetailPanelProps {
