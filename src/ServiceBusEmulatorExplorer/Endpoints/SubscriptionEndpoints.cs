@@ -251,13 +251,11 @@ public static class SubscriptionEndpoints
             // Some emulator builds do not expose entity properties. The receiver remains authoritative.
         }
 
-        var receiver = endpointCache.GetTopicReceiver(topic, sub, new ServiceBusReceiverOptions
+        var result = await Helpers.PurgeMessagesAsync(token => endpointCache.CreateTopicReceiverScopeAsync(topic, sub, new ServiceBusReceiverOptions
         {
             SubQueue = SubQueue.None,
             ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
-        });
-
-        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, cancellationToken: httpContext.RequestAborted);
+        }, token), cancellationToken: httpContext.RequestAborted);
         return Helpers.PurgeHttpResult(result);
     }
 }

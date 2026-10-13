@@ -57,11 +57,10 @@ public static class Helpers
         return new MessageCountResult(count, isExact);
     }
 
-    // Drains every message off the given receiver (active or dead-letter) using ReceiveAndDelete,
+    // Drains messages using an operation-scoped ReceiveAndDelete receiver,
     // for "purge all" style operations. Best-effort: whatever isn't drained before the timeout stays put.
     public static async Task<PurgeResult> PurgeMessagesAsync(
-        ServiceBusEndpointCache endpointCache,
-        ServiceBusReceiver receiver,
+        Func<CancellationToken, Task<ServiceBusEndpointCache.ReceiverScope>> createReceiverScope,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
@@ -70,8 +69,8 @@ public static class Helpers
         var removedCount = 0;
         try
         {
-            await using var _ = await endpointCache.LockAsync(receiver, cts.Token);
-
+            await using var scope = await createReceiverScope(cts.Token);
+            var receiver = scope.Receiver;
             while (!cts.IsCancellationRequested)
             {
                 var batch = await receiver.ReceiveMessagesAsync(

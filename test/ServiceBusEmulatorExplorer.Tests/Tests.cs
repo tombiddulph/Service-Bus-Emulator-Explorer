@@ -555,6 +555,9 @@ public class Tests : TestBase
         await Assert.That(result!.Status).IsEqualTo(PurgeStatus.Failed);
         await Assert.That(result.RemovedCount).IsEqualTo(1);
         await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(2);
+        await Assert.That(serviceBusClient.CreatedReceivers.Last().IsDisposed).IsTrue();
+        serviceBusClient.AddActiveMessage(queueName, "after-failure", "preserved");
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(3);
     }
 
     [Test]
@@ -566,16 +569,15 @@ public class Tests : TestBase
         serviceBusClient.AddActiveMessage(queueName, "two", "two");
         serviceBusClient.ConfigurePurgeReceiver(queueName, batchSize: 1, delay: TimeSpan.FromSeconds(1), delayAfterCalls: 1);
         var endpointCache = Factory.Services.GetRequiredService<ServiceBusEndpointCache>();
-        var receiver = endpointCache.GetReceiver(queueName, new ServiceBusReceiverOptions
-        {
-            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete
-        });
-
-        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, TimeSpan.FromMilliseconds(20));
+        var result = await Helpers.PurgeMessagesAsync(token => endpointCache.CreateReceiverScopeAsync(queueName,
+            new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete }, token), TimeSpan.FromMilliseconds(20));
 
         await Assert.That(result.Status).IsEqualTo(PurgeStatus.TimedOut);
         await Assert.That(result.RemovedCount).IsEqualTo(1);
         await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(1);
+        await Assert.That(serviceBusClient.CreatedReceivers.Last().IsDisposed).IsTrue();
+        serviceBusClient.AddActiveMessage(queueName, "after-timeout", "preserved");
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(2);
     }
 
     [Test]
@@ -589,16 +591,15 @@ public class Tests : TestBase
         using var cts = new CancellationTokenSource();
         serviceBusClient.ActiveBatchReceived = _ => cts.Cancel();
         var endpointCache = Factory.Services.GetRequiredService<ServiceBusEndpointCache>();
-        var receiver = endpointCache.GetReceiver(queueName, new ServiceBusReceiverOptions
-        {
-            ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete
-        });
-
-        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, cancellationToken: cts.Token);
+        var result = await Helpers.PurgeMessagesAsync(token => endpointCache.CreateReceiverScopeAsync(queueName,
+            new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete }, token), cancellationToken: cts.Token);
 
         await Assert.That(result.Status).IsEqualTo(PurgeStatus.Failed);
         await Assert.That(result.RemovedCount).IsEqualTo(1);
         await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(1);
+        await Assert.That(serviceBusClient.CreatedReceivers.Last().IsDisposed).IsTrue();
+        serviceBusClient.AddActiveMessage(queueName, "after-cancellation", "preserved");
+        await Assert.That(serviceBusClient.GetSentMessages(queueName)).Count().IsEqualTo(2);
     }
 
     [Test]

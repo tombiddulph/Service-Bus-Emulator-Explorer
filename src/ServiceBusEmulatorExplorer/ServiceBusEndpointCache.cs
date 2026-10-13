@@ -35,12 +35,61 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
         return receiver;
     }
 
+    // Destructive drains must close their receive link before releasing the entity lock:
+    // an idle ReceiveAndDelete link can retain credit and consume messages sent later.
+    public Task<ReceiverScope> CreateReceiverScopeAsync(
+        string queue, ServiceBusReceiverOptions options, CancellationToken cancellationToken = default) =>
+        CreateReceiverScopeAsync(queue, options, () => client.CreateReceiver(queue, options), cancellationToken);
+
+    public Task<ReceiverScope> CreateTopicReceiverScopeAsync(
+        string topic, string subscription, ServiceBusReceiverOptions options, CancellationToken cancellationToken = default) =>
+        CreateReceiverScopeAsync($"{topic}/Subscriptions/{subscription}", options,
+            () => client.CreateReceiver(topic, subscription, options), cancellationToken);
+
+    private async Task<ReceiverScope> CreateReceiverScopeAsync(
+        string entityPath, ServiceBusReceiverOptions options, Func<ServiceBusReceiver> createReceiver,
+        CancellationToken cancellationToken)
+    {
+        var operationLock = await LockAsync($"{entityPath}-{options.SubQueue}", cancellationToken);
+        try
+        {
+            return new ReceiverScope(createReceiver(), operationLock);
+        }
+        catch
+        {
+            await operationLock.DisposeAsync();
+            throw;
+        }
+    }
+
+    public sealed class ReceiverScope(ServiceBusReceiver receiver, IAsyncDisposable operationLock) : IAsyncDisposable
+    {
+        public ServiceBusReceiver Receiver { get; } = receiver;
+
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await Receiver.DisposeAsync();
+            }
+            finally
+            {
+                await operationLock.DisposeAsync();
+            }
+        }
+    }
+
     // Receivers are cached and shared across concurrent HTTP requests (e.g. the periodic message-list
     // poll racing with a peek/lock/complete replay), but ServiceBusReceiver isn't safe for concurrent use.
     // Callers must hold this lock for the duration of any operation against a given receiver.
     public async Task<IAsyncDisposable> LockAsync(ServiceBusReceiver receiver, CancellationToken cancellationToken = default)
     {
         var operationKey = _receiverOperationKeys.GetOrAdd(receiver, r => $"{r.EntityPath}");
+        return await LockAsync(operationKey, cancellationToken);
+    }
+
+    private async Task<IAsyncDisposable> LockAsync(string operationKey, CancellationToken cancellationToken)
+    {
         var semaphore = _operationLocks.GetOrAdd(operationKey, _ => new SemaphoreSlim(1, 1));
         await semaphore.WaitAsync(cancellationToken);
         return new Releaser(semaphore);

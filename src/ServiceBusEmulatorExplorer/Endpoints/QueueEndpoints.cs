@@ -253,13 +253,11 @@ public static class QueueEndpoints
             // Some emulator builds do not expose entity properties. The receiver remains authoritative.
         }
 
-        var receiver = endpointCache.GetReceiver(name, new ServiceBusReceiverOptions
+        var result = await Helpers.PurgeMessagesAsync(token => endpointCache.CreateReceiverScopeAsync(name, new ServiceBusReceiverOptions
         {
             SubQueue = SubQueue.None,
             ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete,
-        });
-
-        var result = await Helpers.PurgeMessagesAsync(endpointCache, receiver, cancellationToken: httpContext.RequestAborted);
+        }, token), cancellationToken: httpContext.RequestAborted);
         return Helpers.PurgeHttpResult(result);
     }
 }
