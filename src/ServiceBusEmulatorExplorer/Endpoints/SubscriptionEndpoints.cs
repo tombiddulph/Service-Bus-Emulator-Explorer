@@ -125,7 +125,7 @@ public static class SubscriptionEndpoints
 
         await client.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, request.Name)
         {
-            DefaultMessageTimeToLive = EntityValidation.DurationOrDefault(request.DefaultTtl, TimeSpan.FromDays(14)),
+            DefaultMessageTimeToLive = EntityValidation.DurationOrDefault(request.DefaultTtl, TimeSpan.FromHours(1)),
             LockDuration = EntityValidation.DurationOrDefault(request.LockDuration, TimeSpan.FromMinutes(1)),
             MaxDeliveryCount = request.MaxDeliveryCount ?? 10
         }, cancellationToken);

@@ -155,8 +155,11 @@ The API will be available at <http://localhost:5123>.
   "ServiceBus": {
     "ConnectionString": "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;",
     "AdministrationConnectionString": "Endpoint=sb://localhost:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;",
-    "RefreshIntervalMs": 5000,
     "EmulatorConfigFilePath": "service-bus-config.json"
+  },
+  "Explorer": {
+    "ReadOnly": false,
+    "RefreshIntervalMs": 8000
   },
   "Otlp": {
     "Endpoint": "https://your-otel-endpoint",
@@ -177,6 +180,28 @@ Environment variables for the frontend (via `.env` or build scripts):
 
 - `VITE_API_BASE_URL`: Backend API base URL (default: `/api`)
 - `VITE_USE_MOCK`: Enable/disable mock data (for development)
+
+Run `npm run dev:mock` for a standalone demo without Docker or the backend.
+Run `npm run dev:partial` to mock only DLQ operations while using the real API elsewhere.
+
+### Explorer Configuration
+
+- `Explorer__ReadOnly=true`: server-enforced read-only access; defaults to false.
+- `Explorer__RefreshIntervalMs`: default UI polling interval, clamped to 1000–60000 ms; defaults to 8000.
+- `Explorer__AllowedOrigins__0`: permitted development CORS origin. Defaults allow localhost/127.0.0.1 on port 5173.
+
+The header can pause/resume automatic refresh and override its interval. Polling
+pauses in hidden tabs. Count estimates are cached for two seconds and invalidated
+after mutation requests. Message pages use sequence-number cursors; offsets remain
+supported for existing clients. A message arriving or disappearing during browsing
+can change page contents, so displayed page ranges are not stable broker indexes.
+
+See [safe deployment](docs/DEPLOYMENT.md) and [health, metrics and API contracts](docs/OBSERVABILITY.md).
+Queue and subscription creation defaults TTL to one hour, matching the emulator's
+maximum. Invalid names, delivery counts, durations and TTLs return field-specific
+validation problems rather than silently changing the requested settings.
+Compose emulator and SQL dependencies are pinned by digest. Enable Renovate on this
+repository to receive update proposals from `.github/renovate.json`.
 
 ## 📚 API Endpoints
 
@@ -230,8 +255,28 @@ previously loaded messages as stale when a refresh fails.
 Run the test suite from the repository root:
 
 ```bash
-dotnet test sb-explorer.slnx
+dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release
 ```
+
+Run all local CI checks with Node.js 24 and .NET 10:
+
+```bash
+node scripts/verify.mjs
+```
+
+This installs frontend dependencies, builds and lints, runs Vitest and Playwright,
+restores/builds .NET, runs the fake-backed TUnit suite, and checks generated API
+contracts. It does not require Docker. On Linux, install browser system dependencies
+first with `npx playwright install --with-deps chromium` in the frontend directory.
+Use `--skip-browser` only for a partial verification run.
+
+Real-emulator checks are isolated in the **Emulator integration** workflow: it
+builds the published AOT image, starts `test/compose.integration.yaml`, tests broker
+send/peek/DLQ recovery/purge and topic subscriptions, and always cleans up its
+disposable stack. To reproduce locally, build the image as `sb-explorer:integration`,
+set a complexity-compliant `SQL_PASSWORD`, start that Compose file under a separate
+project name, and run `dotnet run --project test/ServiceBusEmulatorExplorer.Integration`.
+Only run these tests against a disposable emulator; they create and delete entities.
 
 ## 🏗️ Project Structure
 

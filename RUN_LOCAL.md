@@ -26,7 +26,7 @@ ASPNETCORE_ENVIRONMENT=Development
 ASPNETCORE_URLS=http://localhost:5123
 ServiceBus__ConnectionString="Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
 ServiceBus__AdministrationConnectionString="Endpoint=sb://localhost:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
-ServiceBus__RefreshIntervalMs=5000
+Explorer__RefreshIntervalMs=5000
 ```
 
 ## Frontend Environment Variables
@@ -52,7 +52,7 @@ dotnet ServiceBusEmulatorExplorer.Api.dll
 
 The command clears Vite mock and API override variables, exports the values from `.env`, publishes the backend and frontend to `artifacts/local`, and starts the application.
 
-No separate `dotnet restore`, `npm install`, `npm run build`, or `dotnet build` command is needed. `dotnet publish` restores and builds the backend, then runs `npm install` and `npm run build` for the frontend.
+No separate `dotnet restore`, `npm ci`, `npm run build`, or `dotnet build` command is needed. `dotnet publish` restores and builds the backend, then runs `npm ci` and `npm run build` for the frontend.
 
 ## Use The Application
 

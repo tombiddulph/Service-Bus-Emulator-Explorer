@@ -17,8 +17,8 @@ internal static class EntityValidation
         if (lockDuration is not null && (!TryDuration(lockDuration, out var duration) ||
                                         duration <= TimeSpan.Zero || duration > TimeSpan.FromMinutes(5)))
             errors["lockDuration"] = ["Lock duration must be a valid TimeSpan greater than zero and at most 00:05:00."];
-        if (defaultTtl is not null && (!TryDuration(defaultTtl, out var ttl) || ttl <= TimeSpan.Zero))
-            errors["defaultTtl"] = ["Default TTL must be a valid TimeSpan greater than zero."];
+        if (defaultTtl is not null && (!TryDuration(defaultTtl, out var ttl) || ttl <= TimeSpan.Zero || ttl > TimeSpan.FromHours(1)))
+            errors["defaultTtl"] = ["Default TTL must be a valid TimeSpan greater than zero and at most 01:00:00 (emulator limit)."];
         return errors;
     }
 

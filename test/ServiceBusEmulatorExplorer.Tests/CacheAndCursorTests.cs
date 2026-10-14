@@ -33,6 +33,15 @@ public class CacheAndCursorTests : TestBase
         var replacement = cache.GetReceiver("retired", new());
         await Assert.That(ReferenceEquals(receiver, replacement)).IsFalse();
         await Assert.That(replacement.IsClosed).IsFalse();
+        try
+        {
+            await using var unexpectedLock = await cache.LockAsync(receiver);
+            throw new InvalidOperationException("Retired receivers must not be used by queued requests.");
+        }
+        catch (ServiceBusException exception)
+        {
+            await Assert.That(exception.Reason).IsEqualTo(ServiceBusFailureReason.MessagingEntityNotFound);
+        }
     }
 
     [Test]

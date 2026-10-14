@@ -422,9 +422,9 @@ public class TestServiceBusAdministrationClient : ServiceBusAdministrationClient
         
         var queueProperties = ServiceBusModelFactory.QueueProperties(
             name: name,
-            lockDuration: TimeSpan.FromMinutes(1),
-            maxDeliveryCount: 10,
-            defaultMessageTimeToLive: TimeSpan.FromDays(14),
+            lockDuration: _queues[name].LockDuration,
+            maxDeliveryCount: _queues[name].MaxDeliveryCount,
+            defaultMessageTimeToLive: _queues[name].DefaultMessageTimeToLive,
             autoDeleteOnIdle: TimeSpan.MaxValue,
             duplicateDetectionHistoryTimeWindow: TimeSpan.FromDays(1),
             userMetadata:"",

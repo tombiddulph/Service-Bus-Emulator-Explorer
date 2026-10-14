@@ -46,7 +46,9 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     public async Task RemoveEntityAsync(string entityPath)
     {
         InvalidateCounts();
-        foreach (var (key, receiver) in _receivers.ToArray())
+        KeyValuePair<string, ServiceBusReceiver>[] receivers;
+        lock (_creationLock) receivers = _receivers.ToArray();
+        foreach (var (key, receiver) in receivers)
         {
             if (receiver.EntityPath != entityPath && !receiver.EntityPath.StartsWith(entityPath + "/", StringComparison.Ordinal)) continue;
             await using var operationLock = await LockAsync(receiver);
@@ -65,10 +67,12 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     public ServiceBusReceiver GetReceiver(string queue, ServiceBusReceiverOptions receiverOptions)
     {
         var key = $"{queue}-{receiverOptions.ReceiveMode}-{receiverOptions.SubQueue}";
-        ServiceBusReceiver receiver;
-        lock (_creationLock) receiver = _receivers.GetOrAdd(key, _ => client.CreateReceiver(queue, receiverOptions));
-        _receiverOperationKeys.GetValue(receiver, _ => new OperationKey($"{queue}-{receiverOptions.SubQueue}"));
-        return receiver;
+        lock (_creationLock)
+        {
+            var receiver = _receivers.GetOrAdd(key, _ => client.CreateReceiver(queue, receiverOptions));
+            _receiverOperationKeys.GetValue(receiver, _ => new OperationKey($"{queue}-{receiverOptions.SubQueue}"));
+            return receiver;
+        }
     }
 
     public ServiceBusReceiver GetTopicReceiver(
@@ -78,10 +82,12 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     {
         var entityPath = $"{topic}/Subscriptions/{subscription}";
         var key = $"{entityPath}-{receiverOptions.ReceiveMode}-{receiverOptions.SubQueue}";
-        ServiceBusReceiver receiver;
-        lock (_creationLock) receiver = _receivers.GetOrAdd(key, _ => client.CreateReceiver(topic, subscription, receiverOptions));
-        _receiverOperationKeys.GetValue(receiver, _ => new OperationKey($"{entityPath}-{receiverOptions.SubQueue}"));
-        return receiver;
+        lock (_creationLock)
+        {
+            var receiver = _receivers.GetOrAdd(key, _ => client.CreateReceiver(topic, subscription, receiverOptions));
+            _receiverOperationKeys.GetValue(receiver, _ => new OperationKey($"{entityPath}-{receiverOptions.SubQueue}"));
+            return receiver;
+        }
     }
 
     // Destructive drains must close their receive link before releasing the entity lock:
@@ -134,7 +140,14 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     public async Task<IAsyncDisposable> LockAsync(ServiceBusReceiver receiver, CancellationToken cancellationToken = default)
     {
         var operationKey = _receiverOperationKeys.GetValue(receiver, r => new OperationKey(r.EntityPath)).Value;
-        return await LockAsync(operationKey, cancellationToken);
+        var operationLock = await LockAsync(operationKey, cancellationToken);
+        if (receiver.IsClosed)
+        {
+            await operationLock.DisposeAsync();
+            throw new ServiceBusException("The cached entity receiver has been retired. Refresh and try again.",
+                ServiceBusFailureReason.MessagingEntityNotFound);
+        }
+        return operationLock;
     }
 
     private async Task<IAsyncDisposable> LockAsync(string operationKey, CancellationToken cancellationToken)

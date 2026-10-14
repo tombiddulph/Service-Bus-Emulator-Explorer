@@ -27,4 +27,7 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(DeleteDlqResult))]
 [JsonSerializable(typeof(PurgeResult))]
 [JsonSerializable(typeof(Microsoft.AspNetCore.Http.HttpValidationProblemDetails))]
+[JsonSerializable(typeof(Microsoft.AspNetCore.Mvc.ProblemDetails))]
+[JsonSerializable(typeof(CaseInsensitiveEnum<PeekMode>))]
+[JsonSerializable(typeof(CaseInsensitiveEnum<MessageState>))]
 public partial class AppJsonContext : JsonSerializerContext;

@@ -43,7 +43,7 @@ const TopicDetailContent = () => {
   const { data: topics, isLoading, error, refetch, isFetching } = useTopics()
   const topic = topics?.find(t => t.name === name)
 
-  const { data: subs, refetch: refetchSubs, error: subsError, isFetching: subsFetching } = useSubscriptions(name ?? '', true)
+  const { data: subs, refetch: refetchSubs, error: subsError, isFetching: subsFetching, isLoading: subsLoading } = useSubscriptions(name ?? '', true)
   const sub = subs?.find(s => s.name === subscription)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
@@ -119,6 +119,11 @@ const TopicDetailContent = () => {
   if (isLoading && !topic) return <Loader size="sm" />
   if (error && !topic) return <QueryError error={error} onRetry={() => { void refetch() }} retrying={isFetching} />
   if (!topic) return <Text>Topic not found.</Text>
+  if (subscription && !sub) {
+    if (subsLoading) return <Loader size="sm" />
+    if (subsError) return <QueryError error={subsError} onRetry={() => { void refetchSubs() }} retrying={subsFetching} />
+    return <Text>Subscription not found.</Text>
+  }
 
   const renderSubscriptionList = () => (
     <section aria-label="Subscriptions">

@@ -6,7 +6,7 @@
     environment:
       - "ServiceBus__ConnectionString=Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
       - "ServiceBus__AdministrationConnectionString=Endpoint=sb://servicebus-emulator:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
-      - "ServiceBus_RefreshIntervalMs=5000"
+      - "Explorer__RefreshIntervalMs=5000"
       - "ASPNETCORE_ENVIRONMENT=Production"
     networks:
       sb-emulator:
@@ -14,8 +14,7 @@
           - "sb-explorer"
   servicebus-emulator:
     container_name: "servicebus-emulator"
-    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
-    pull_policy: always
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1@sha256:5a96d893b245031740f7d46e0fe5ff282d24b78c4b7d761dd57590f3f010a9b3
   
     ports:
       - "127.0.0.1:5672:5672"
@@ -32,7 +31,7 @@
           - "servicebus-emulator"
   sql:
     container_name: "sql"
-    image: "mcr.microsoft.com/mssql/server:latest"
+    image: "mcr.microsoft.com/mssql/server:2022-latest@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718"
     networks:
       sb-emulator:
         aliases:

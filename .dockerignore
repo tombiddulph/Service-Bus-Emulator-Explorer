@@ -19,6 +19,9 @@
 **/node_modules
 **/npm-debug.log
 **/obj
+artifacts
+**/test-results
+**/playwright-report
 **/secrets.dev.yaml
 **/values.dev.yaml
 LICENSE

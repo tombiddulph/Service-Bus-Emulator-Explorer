@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "cross-env VITE_API_BASE_URL=http://localhost:5123/api VITE_USE_MOCK=false VITE_USE_MOCK_QUEUES=false VITE_USE_MOCK_TOPICS=false VITE_USE_MOCK_SUBSCRIPTIONS=false VITE_USE_MOCK_MESSAGES=false VITE_USE_MOCK_DLQ=false vite",
-    "dev:mock": "cross-env VITE_API_BASE_URL=/api VITE_USE_MOCK=false vite",
+    "dev:mock": "cross-env VITE_API_BASE_URL=/api VITE_USE_MOCK=true vite",
     "dev:partial": "cross-env VITE_API_BASE_URL=http://localhost:5123/api VITE_USE_MOCK=false VITE_USE_MOCK_QUEUES=false VITE_USE_MOCK_TOPICS=false VITE_USE_MOCK_SUBSCRIPTIONS=false VITE_USE_MOCK_MESSAGES=false VITE_USE_MOCK_DLQ=true vite",
     "build": "cross-env VITE_API_BASE_URL=/api VITE_USE_MOCK=false VITE_USE_MOCK_QUEUES=false VITE_USE_MOCK_TOPICS=false VITE_USE_MOCK_SUBSCRIPTIONS=false VITE_USE_MOCK_MESSAGES=false VITE_USE_MOCK_DLQ=false tsc -b && vite build",
     "lint": "eslint .",
