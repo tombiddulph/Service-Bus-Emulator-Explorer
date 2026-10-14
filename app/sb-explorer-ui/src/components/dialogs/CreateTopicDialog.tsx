@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Button, Group, Modal, Stack, TextInput, Title } from '@mantine/core'
+import ConfirmSubmitButton from './ConfirmSubmitButton'
 
 interface CreateTopicDialogProps {
   open: boolean
@@ -22,9 +23,9 @@ const CreateTopicForm = ({ onOpenChange, onSubmit }: Omit<CreateTopicDialogProps
         <Button variant="default" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
-        <Button onClick={handleSubmit} disabled={!name}>
+        <ConfirmSubmitButton onClick={handleSubmit} disabled={!name}>
           Create
-        </Button>
+        </ConfirmSubmitButton>
       </Group>
     </Stack>
   )

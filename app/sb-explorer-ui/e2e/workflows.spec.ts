@@ -24,8 +24,30 @@ test('send, inspect and confirm purge', async ({ page }) => {
   await expect(page.getByText('Message sent', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Purge active messages' }).click()
   await expect(page.getByRole('dialog')).toContainText('permanently deletes')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Purge', exact: true })).toBeDisabled()
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
   await expect(page.getByRole('dialog')).not.toBeVisible()
+})
+
+test('read-only mode disables mutations', async ({ page }) => {
+  await page.route('**/api/environment', route => route.fulfill({ json: { name: 'Test', readOnly: true } }))
+  await page.goto('/queues/orders')
+  await expect(page.getByText('Read-only', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Purge active messages' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+})
+
+test('deleting an entity requires its exact name', async ({ page }) => {
+  await page.goto('/queues/orders')
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+  await dialog.getByLabel('Type entity name to confirm').fill('wrong-name')
+  await expect(dialog.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+  await dialog.getByLabel('Type entity name to confirm').fill('orders')
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page).toHaveURL(/\/queues$/)
 })
 
 test('create entities and navigate subscriptions', async ({ page }) => {
@@ -48,6 +70,8 @@ test('partial DLQ replay leaves safe failures selected', async ({ page }) => {
   await page.getByRole('tab', { name: /Dead/ }).click()
   await page.getByRole('checkbox', { name: 'Select message message-one' }).check()
   await page.getByRole('button', { name: 'Replay selected' }).click()
+  await page.getByRole('dialog').getByLabel('Type entity name to confirm').fill('orders')
+  await page.getByRole('dialog').getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(page.getByText('DLQ replay partially completed', { exact: true })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: 'Select message message-one' })).toBeChecked()
 })

@@ -21,7 +21,7 @@ const dlqOperationTimeoutMs = 45000
 export const useEnvironment = () =>
   useQuery({
     queryKey: ['environment'],
-    queryFn: async () => (await apiClient.get<{ name: string }>('/environment')).data.name,
+    queryFn: async () => (await apiClient.get<{ name: string; readOnly: boolean }>('/environment')).data,
     staleTime: Infinity,
     // The API can still be warming up on the very first page load, so keep retrying instead of failing permanently.
     retry: 10,
@@ -30,6 +30,8 @@ export const useEnvironment = () =>
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   })
+
+export const useReadOnly = () => useEnvironment().data?.readOnly ?? true
 
 const scopeKey = (scope: MessageScope) =>
   scope.type === 'queue' ? `queue:${scope.name}` : `subscription:${scope.topic}:${scope.subscription}`

@@ -31,11 +31,15 @@ import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
 import QueryError from '../components/QueryError'
 import { apiErrorMessage } from '../utils/apiError'
+import ConfirmedActionButton from '../components/dialogs/ConfirmedActionButton'
+import ConfirmSubmitButton from '../components/dialogs/ConfirmSubmitButton'
+import { useReadOnly } from '../api/hooks'
 
 const TopicDetailContent = () => {
   const { name, subscription } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
+  const readOnly = useReadOnly()
   const { data: topics, isLoading, error, refetch, isFetching } = useTopics()
   const topic = topics?.find(t => t.name === name)
 
@@ -119,7 +123,7 @@ const TopicDetailContent = () => {
       <QueryError error={subsError} stale={!!subs} retrying={subsFetching} onRetry={() => { void refetchSubs() }} />
       <Group justify="space-between" align="center" mb="sm">
         <Text fw={600}>Subscriptions</Text>
-        <Button variant="subtle" onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
+        <Button disabled={readOnly} variant="subtle" onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
       </Group>
       <ScrollArea>
       <Table
@@ -223,7 +227,7 @@ const TopicDetailContent = () => {
                 color="red"
                 variant="subtle"
                 leftSection={<IconTrash size={16} />}
-                disabled={purgeMessages.isPending || !sub?.activeMessageCount}
+                disabled={readOnly || purgeMessages.isPending || !sub?.activeMessageCount}
                 onClick={() => setPurgeTarget(messageScope)}
               >
                 Purge active messages
@@ -236,7 +240,9 @@ const TopicDetailContent = () => {
                   checked={removeFromDlq}
                   onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
                 />
-                <Button
+                <ConfirmedActionButton
+                  entity={`${name}/${subscription}`}
+                  description={`Replay ${selectedIds.length ? `${selectedIds.length} selected messages` : 'every DLQ message'}. Originals will ${removeFromDlq ? 'be removed' : 'remain in the DLQ'}.`}
                   variant="subtle"
                   leftSection={<IconPlayerPlay size={16} />}
                   disabled={dlqOperationPending || (selectedIds.length === 0 && !messages.data?.items.length)}
@@ -255,8 +261,10 @@ const TopicDetailContent = () => {
                   }
                 >
                   {selectedIds.length ? 'Replay selected' : 'Replay all'}
-                </Button>
-                <Button
+                </ConfirmedActionButton>
+                <ConfirmedActionButton
+                  entity={`${name}/${subscription}`}
+                  description={`Permanently delete ${selectedIds.length} selected DLQ messages. This cannot be undone.`}
                   color="red"
                   variant="subtle"
                   leftSection={<IconTrash size={16} />}
@@ -276,7 +284,7 @@ const TopicDetailContent = () => {
                       },
                     )
                   }
-                >Delete selected DLQ</Button>
+                >Delete selected DLQ</ConfirmedActionButton>
               </Group>
             )}
           </Group>
@@ -355,15 +363,16 @@ const TopicDetailContent = () => {
         open={deleteTopicOpen}
         onOpenChange={setDeleteTopicOpen}
         title={`Delete topic ${topic.name}?`}
+        confirmationText={topic.name}
         description="Deleting the topic removes all subscriptions and messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteTopicOpen(false)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDeleteTopic}>
+          <ConfirmSubmitButton color="red" onClick={handleDeleteTopic}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
 
@@ -371,15 +380,16 @@ const TopicDetailContent = () => {
         open={deleteSubOpen}
         onOpenChange={setDeleteSubOpen}
         title={`Delete subscription ${subscription}?`}
+        confirmationText={subscription}
         description="Deleting the subscription removes its messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteSubOpen(false)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDeleteSub}>
+          <ConfirmSubmitButton color="red" onClick={handleDeleteSub}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
 
@@ -387,13 +397,14 @@ const TopicDetailContent = () => {
         open={!!purgeTarget}
         onOpenChange={(open) => !open && !purgeMessages.isPending && setPurgeTarget(undefined)}
         title={`Purge active messages in ${purgeTarget?.type === 'subscription' ? purgeTarget.subscription : subscription}?`}
+        confirmationText={subscription}
         description="This permanently deletes every active (non-dead-lettered) message in the subscription."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" disabled={purgeMessages.isPending} onClick={() => setPurgeTarget(undefined)}>
             Cancel
           </Button>
-          <Button
+          <ConfirmSubmitButton
             color="red"
             disabled={!purgeTarget || purgeMessages.isPending}
             loading={purgeMessages.isPending}
@@ -418,7 +429,7 @@ const TopicDetailContent = () => {
             }
           >
             Purge
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
     </Stack>

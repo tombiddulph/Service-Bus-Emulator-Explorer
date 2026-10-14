@@ -35,7 +35,8 @@ function AppShell() {
             <Text size="xs" className="portal-topbar-label" visibleFrom="sm">Emulator</Text>
           </Group>
           <Group gap={8} wrap="nowrap">
-            <Badge variant="outline" color="gray.0" radius={2} visibleFrom="sm">{environment ?? 'Connecting…'}</Badge>
+            <Badge variant="outline" color="gray.0" radius={2} visibleFrom="sm">{environment?.name ?? 'Connecting…'}</Badge>
+            {environment?.readOnly && <Badge color="yellow">Read-only</Badge>}
             <Tooltip label="Refresh all resources">
               <ActionIcon variant="transparent" color="white" aria-label="Refresh all resources" onClick={() => queryClient.invalidateQueries()}><IconRefresh size={18} /></ActionIcon>
             </Tooltip>

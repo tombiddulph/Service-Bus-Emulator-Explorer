@@ -4,14 +4,16 @@ import { Button, Group, Stack, Text } from '@mantine/core'
 import EntityTable from '../components/EntityTable'
 import ConfirmActionDialog from '../components/dialogs/ConfirmActionDialog'
 import CreateTopicDialog from '../components/dialogs/CreateTopicDialog'
-import { useCreateTopic, useDeleteTopic, useTopics } from '../api/hooks'
+import { useCreateTopic, useDeleteTopic, useTopics, useReadOnly } from '../api/hooks'
 import type { TopicInfo } from '../api/types'
 import QueryError from '../components/QueryError'
 import { notifications } from '@mantine/notifications'
 import { apiErrorMessage } from '../utils/apiError'
+import ConfirmSubmitButton from '../components/dialogs/ConfirmSubmitButton'
 
 const Topics = () => {
   const navigate = useNavigate()
+  const readOnly = useReadOnly()
   const { data: topics, isLoading, refetch, error, isFetching } = useTopics()
   const createTopic = useCreateTopic()
   const deleteTopic = useDeleteTopic()
@@ -48,7 +50,7 @@ const Topics = () => {
         emptyState={
           <Group gap="xs">
              <Text>{error ? 'Topics could not be loaded.' : 'No topics yet.'}</Text>
-            <Button variant="subtle" onClick={() => setCreateOpen(true)}>
+            <Button disabled={readOnly} variant="subtle" onClick={() => setCreateOpen(true)}>
               Create one
             </Button>
           </Group>
@@ -61,15 +63,16 @@ const Topics = () => {
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title={`Delete topic ${deleteTarget?.name ?? ''}`}
+        confirmationText={deleteTarget?.name}
         description="This will remove the topic and its messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteTarget(null)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDelete} disabled={!deleteTarget}>
+          <ConfirmSubmitButton color="red" onClick={handleDelete} disabled={!deleteTarget}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
     </Stack>

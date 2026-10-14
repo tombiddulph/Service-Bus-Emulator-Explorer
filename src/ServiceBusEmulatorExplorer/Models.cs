@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace ServiceBusEmulatorExplorer;
 
-public record EnvironmentInfo(string Name);
+public record EnvironmentInfo(string Name, bool ReadOnly = false);
 
 [JsonConverter(typeof(JsonStringEnumConverter<EntityStatus>))]
 public enum EntityStatus

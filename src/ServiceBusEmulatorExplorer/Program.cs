@@ -21,7 +21,9 @@ builder
     .AddEnvironmentVariables();
 
 var serviceBusConfig = builder.Configuration.GetSection(ServiceBusConfig.SectionName).Get<ServiceBusConfig>() ??
-                       throw new InvalidOperationException("ServiceBusConfig section is missing");
+                        throw new InvalidOperationException("ServiceBusConfig section is missing");
+var explorerOptions = builder.Configuration.GetSection("Explorer").Get<ExplorerOptions>() ?? new ExplorerOptions();
+builder.Services.AddOptions<ExplorerOptions>().BindConfiguration("Explorer");
 
 builder.Services
     .AddOpenApi()
@@ -62,7 +64,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(explorerOptions.AllowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
@@ -82,6 +84,18 @@ app.MapOpenApi();
 app.MapScalarApiReference();
 
 app.UseExceptionHandler();
+app.Use(async (context, next) =>
+{
+    var options = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ExplorerOptions>>().Value;
+    if (options.ReadOnly && context.Request.Path.StartsWithSegments("/api") &&
+        !HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method) &&
+        !HttpMethods.IsOptions(context.Request.Method))
+    {
+        await Results.Problem("This explorer is configured as read-only.", statusCode: 403, title: "Read-only mode").ExecuteAsync(context);
+        return;
+    }
+    await next(context);
+});
 app.UseStatusCodePages(async statusCodeContext =>
 {
     var httpContext = statusCodeContext.HttpContext;
@@ -108,7 +122,8 @@ app.UseStatusCodePages(async statusCodeContext =>
 app.UseHttpsRedirection();
 
 var api = app.MapGroup("/api");
-api.MapGet("/environment", (IHostEnvironment environment) => Results.Ok(new EnvironmentInfo(environment.EnvironmentName)));
+api.MapGet("/environment", (IHostEnvironment environment, Microsoft.Extensions.Options.IOptions<ExplorerOptions> options) =>
+    Results.Ok(new EnvironmentInfo(environment.EnvironmentName, options.Value.ReadOnly)));
 api
     .MapQueueEndpoints()
     .MapTopicEndpoints()

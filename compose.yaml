@@ -2,8 +2,7 @@
   sb-explorer:
     image: ghcr.io/tombiddulph/service-bus-emulator-explorer:0.3.0
     ports:
-      - "8080:8080"
-      - "8081:8081"
+      - "127.0.0.1:8080:8080"
     environment:
       - "ServiceBus__ConnectionString=Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
       - "ServiceBus__AdministrationConnectionString=Endpoint=sb://servicebus-emulator:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
@@ -19,8 +18,8 @@
     pull_policy: always
   
     ports:
-      - "5672:5672"
-      - "5300:5300"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:5300:5300"
     environment:
       SQL_SERVER: sql
       MSSQL_SA_PASSWORD: "${SQL_PASSWORD}"  # Password should be same as what is set for SQL
