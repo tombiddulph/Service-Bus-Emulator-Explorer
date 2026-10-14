@@ -4,6 +4,7 @@ import { IconMessageDots, IconPlus, IconRefresh, IconSend, IconTopologyStar, Ico
 import type { EntityStatus } from '../api/types'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import StatusPill from './StatusPill'
+import { useReadOnly } from '../api/hooks'
 
 interface EntityHeaderProps {
   name: string
@@ -20,6 +21,7 @@ interface EntityHeaderProps {
 
 const EntityHeader = ({ name, type, status, activeCount, deadLetterCount, activeCountIsExact, deadLetterCountIsExact, onSend, onDelete, onCreateSubscription }: EntityHeaderProps) => {
   const queryClient = useQueryClient()
+  const readOnly = useReadOnly()
   const Icon = type === 'queue' ? IconMessageDots : IconTopologyStar
   return <section aria-label={`${type} overview`}>
     <div className="portal-resource-heading">
@@ -27,10 +29,10 @@ const EntityHeader = ({ name, type, status, activeCount, deadLetterCount, active
       <div><h1>{name}</h1><Text size="xs" c="dimmed">Service Bus {type}</Text></div>
     </div>
     <div className="portal-command-bar" role="toolbar" aria-label="Resource commands">
-      {onSend && <Button variant="subtle" leftSection={<IconSend size={16} />} onClick={onSend}>Send message</Button>}
-      {onCreateSubscription && <Button variant="subtle" leftSection={<IconPlus size={16} />} onClick={onCreateSubscription}>Subscription</Button>}
+      {onSend && <Button disabled={readOnly} variant="subtle" leftSection={<IconSend size={16} />} onClick={onSend}>Send message</Button>}
+      {onCreateSubscription && <Button disabled={readOnly} variant="subtle" leftSection={<IconPlus size={16} />} onClick={onCreateSubscription}>Subscription</Button>}
       <Button variant="subtle" leftSection={<IconRefresh size={16} />} onClick={() => queryClient.invalidateQueries()}>Refresh</Button>
-      {onDelete && <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={onDelete}>Delete</Button>}
+      {onDelete && <Button disabled={readOnly} variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={onDelete}>Delete</Button>}
     </div>
     <Group gap="xl" pt="sm">
       <StatusPill status={status} />

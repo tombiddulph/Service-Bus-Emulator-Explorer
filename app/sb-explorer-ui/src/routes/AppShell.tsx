@@ -1,17 +1,20 @@
 import { useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { ActionIcon, Anchor, AppShell as MantineAppShell, Badge, Breadcrumbs, Group, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Anchor, AppShell as MantineAppShell, Badge, Breadcrumbs, Button, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
 import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMenu2, IconMoon, IconRefresh, IconSun, IconTopologyStar } from '@tabler/icons-react'
 import NavTree from '../components/NavTree'
 import MockBanner from '../components/MockBanner'
 import { useAppContext } from '../AppContext'
-import { useEnvironment } from '../api/hooks'
+import { useConnection, useEnvironment } from '../api/hooks'
+import { setRefreshSettings, useRefreshSettings } from '../api/refreshSettings'
 
 function AppShell() {
   const { theme, toggleTheme } = useAppContext()
   const queryClient = useQueryClient()
   const { data: environment } = useEnvironment()
+  const refresh = useRefreshSettings()
+  const connection = useConnection()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { pathname } = useLocation()
@@ -35,7 +38,16 @@ function AppShell() {
             <Text size="xs" className="portal-topbar-label" visibleFrom="sm">Emulator</Text>
           </Group>
           <Group gap={8} wrap="nowrap">
-            <Badge variant="outline" color="gray.0" radius={2} visibleFrom="sm">{environment ?? 'Connecting…'}</Badge>
+            <Button size="compact-xs" variant="white" onClick={() => setRefreshSettings({ paused: !refresh.paused })}>{refresh.paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}</Button>
+            <Select aria-label="Refresh interval" size="xs" w={100} value={String(refresh.intervalMs ?? environment?.refreshIntervalMs ?? 8000)} data={[
+              { value: String(environment?.refreshIntervalMs ?? 8000), label: 'Default' },
+              { value: '15000', label: '15 sec' }, { value: '30000', label: '30 sec' }, { value: '60000', label: '60 sec' },
+            ].filter((option, index, all) => all.findIndex(other => other.value === option.value) === index)} onChange={value => setRefreshSettings({ intervalMs: value ? Number(value) : null })} />
+            <Badge variant="outline" color="gray.0" radius={2} visibleFrom="sm">{environment?.name ?? 'Connecting…'}</Badge>
+            {environment?.readOnly && <Badge color="yellow">Read-only</Badge>}
+            <Tooltip label={`Administration: ${connection.data?.administrationAvailable ? 'available' : 'unavailable'}; AMQP transport: ${connection.data?.amqpTransportAvailable ? 'reachable' : 'unreachable'}. Last successful check: ${connection.dataUpdatedAt ? new Date(connection.dataUpdatedAt).toLocaleTimeString() : 'never'}`}>
+              <Badge color={connection.error || !connection.data?.ready ? 'red' : 'green'}>{connection.isPending ? 'Checking connection…' : connection.error ? 'API unavailable' : connection.data?.ready ? 'Connected' : 'Dependency unavailable'}</Badge>
+            </Tooltip>
             <Tooltip label="Refresh all resources">
               <ActionIcon variant="transparent" color="white" aria-label="Refresh all resources" onClick={() => queryClient.invalidateQueries()}><IconRefresh size={18} /></ActionIcon>
             </Tooltip>

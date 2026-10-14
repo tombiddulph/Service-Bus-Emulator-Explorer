@@ -52,7 +52,6 @@ console.log("[SB-Explorer] Configuration:", {
   apiBaseUrl,
   isMockEnabled,
   mockMatrix,
-  env: import.meta.env,
 });
 
 export const messagePath = (scope: MessageScope | SendScope) => {
@@ -92,22 +91,22 @@ const mockData = (() => {
   const queues: QueueInfo[] = [
     {
       name: "orders",
-      status: "Active",
+      status: "active",
       activeMessageCount: 2,
       deadLetterMessageCount: 1,
       maxDeliveryCount: 10,
       lockDuration: "00:01:00",
-      defaultTtl: "1.00:00:00",
+      defaultTtl: "01:00:00",
       createdAt: new Date().toISOString(),
     },
     {
       name: "payments",
-      status: "Active",
+      status: "active",
       activeMessageCount: 0,
       deadLetterMessageCount: 0,
       maxDeliveryCount: 5,
       lockDuration: "00:00:45",
-      defaultTtl: "1.00:00:00",
+      defaultTtl: "01:00:00",
       createdAt: new Date().toISOString(),
     },
   ];
@@ -115,7 +114,7 @@ const mockData = (() => {
   const topics: TopicInfo[] = [
     {
       name: "invoices",
-      status: "Active",
+      status: "active",
       activeMessageCount: 3,
       deadLetterMessageCount: 0,
       createdAt: new Date().toISOString(),
@@ -126,21 +125,21 @@ const mockData = (() => {
     invoices: [
       {
         name: "processor",
-        status: "Active",
+        status: "active",
         activeMessageCount: 2,
         deadLetterMessageCount: 0,
         maxDeliveryCount: 10,
         lockDuration: "00:01:00",
-        defaultTtl: "1.00:00:00",
+        defaultTtl: "01:00:00",
       },
       {
         name: "archiver",
-        status: "Active",
+        status: "active",
         activeMessageCount: 1,
         deadLetterMessageCount: 0,
         maxDeliveryCount: 5,
         lockDuration: "00:00:45",
-        defaultTtl: "1.00:00:00",
+        defaultTtl: "01:00:00",
       },
     ],
   };
@@ -208,6 +207,7 @@ const mockData = (() => {
       items: slice,
       total: items.length,
       hasMore: skip + take < items.length,
+      nextSequenceNumber: skip + take < items.length ? String(skip + take + 1) : null,
     };
   };
 
@@ -217,6 +217,11 @@ const mockData = (() => {
 const mockAdapter: AxiosAdapter = async (config) => {
   const { method = "get", url, data, params } = config;
   const path = url?.replace(baseURL, "") ?? "";
+
+  if (useMockAll && method === "get" && path === "/environment")
+    return respond({ name: "Mock", readOnly: false, refreshIntervalMs: 8000 }, config);
+  if (useMockAll && method === "get" && path === "/connection")
+    return respond({ administrationAvailable: true, amqpTransportAvailable: true, ready: true, checkedAt: new Date().toISOString() }, config);
 
   // Queues
   if (useMockQueues) {
@@ -228,12 +233,12 @@ const mockAdapter: AxiosAdapter = async (config) => {
       if (!exists) {
         mockData.queues.push({
           name: payload.name,
-          status: "Active",
+          status: "active",
           activeMessageCount: 0,
           deadLetterMessageCount: 0,
           maxDeliveryCount: payload.maxDeliveryCount ?? 10,
           lockDuration: payload.lockDuration ?? "00:01:00",
-          defaultTtl: payload.defaultTtl ?? "1.00:00:00",
+          defaultTtl: payload.defaultTtl ?? "01:00:00",
           createdAt: new Date().toISOString(),
         });
       }
@@ -258,7 +263,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
       if (!exists) {
         mockData.topics.push({
           name: payload.name,
-          status: "Active",
+          status: "active",
           activeMessageCount: 0,
           deadLetterMessageCount: 0,
           createdAt: new Date().toISOString(),
@@ -300,12 +305,12 @@ const mockAdapter: AxiosAdapter = async (config) => {
         if (!exists) {
           list.push({
             name: payload.name,
-            status: "Active",
+            status: "active",
             activeMessageCount: 0,
             deadLetterMessageCount: 0,
             maxDeliveryCount: payload.maxDeliveryCount ?? 10,
             lockDuration: payload.lockDuration ?? "00:01:00",
-            defaultTtl: payload.defaultTtl ?? "1.00:00:00",
+            defaultTtl: payload.defaultTtl ?? "01:00:00",
           });
           mockData.subscriptions[topic] = list;
         }
@@ -325,7 +330,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
   // Messages
   if (useMockMessages && method === "get" && path?.includes("/messages")) {
     const state = (params?.state as MessageState) ?? "active";
-    const skip = Number(params?.skip ?? 0);
+    const skip = params?.fromSequenceNumber ? Number(params.fromSequenceNumber) - 1 : Number(params?.skip ?? 0);
     const take = Number(params?.take ?? 25);
     if (path.startsWith("/queues/")) {
       const [, , queueName] = path.split("/");
@@ -340,7 +345,22 @@ const mockAdapter: AxiosAdapter = async (config) => {
   }
 
   if (useMockMessages && method === "post" && path?.includes("/messages")) {
-    // treat as send; just ack
+    const payload = typeof data === "string" ? JSON.parse(data) : data;
+    const message: MessageInfo = { messageId: crypto.randomUUID(), body: payload.body, bodyPreview: payload.body.slice(0, 50), contentType: payload.contentType, sessionId: payload.sessionId, enqueuedTime: new Date().toISOString() };
+    if (path.startsWith("/queues/")) {
+      const name = path.split("/")[2];
+      const key = `queue:${name}:active`;
+      (mockData.messages[key] ??= []).push(message);
+      const queue = mockData.queues.find(item => item.name === name);
+      if (queue) queue.activeMessageCount = mockData.messages[key].length;
+    } else {
+      const topic = path.split("/")[2];
+      for (const sub of mockData.subscriptions[topic] ?? []) {
+        const key = `subscription:${topic}:${sub.name}:active`;
+        (mockData.messages[key] ??= []).push({ ...message });
+        sub.activeMessageCount = mockData.messages[key].length;
+      }
+    }
     return respond({}, config);
   }
 
@@ -403,7 +423,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
     const messageIds: string[] = payload?.messageIds ?? [];
     return respond<DeleteDlqResult>({
       count: messageIds.length,
-      status: "completed",
+      status: "Completed",
       isPartial: false,
       outcomes: messageIds.map((messageId) => ({ messageId, deleted: true })),
       notFound: [],

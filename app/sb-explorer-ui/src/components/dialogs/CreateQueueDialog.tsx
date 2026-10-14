@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Button, Group, Modal, NumberInput, Stack, TextInput, Title } from '@mantine/core'
+import ConfirmSubmitButton from './ConfirmSubmitButton'
 
 interface CreateQueueDialogProps {
   open: boolean
@@ -75,9 +76,9 @@ const CreateQueueForm = ({ onOpenChange, onSubmit }: Omit<CreateQueueDialogProps
         <Button variant="default" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
-        <Button onClick={handleSubmit} disabled={!name}>
+        <ConfirmSubmitButton onClick={handleSubmit} disabled={!name}>
           Create
-        </Button>
+        </ConfirmSubmitButton>
       </Group>
     </Stack>
   )

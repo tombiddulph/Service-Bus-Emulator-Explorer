@@ -29,19 +29,26 @@ import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../AppContext'
 import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
+import QueryError from '../components/QueryError'
+import { apiErrorMessage } from '../utils/apiError'
+import ConfirmedActionButton from '../components/dialogs/ConfirmedActionButton'
+import ConfirmSubmitButton from '../components/dialogs/ConfirmSubmitButton'
+import { useReadOnly } from '../api/hooks'
 
 const TopicDetailContent = () => {
   const { name, subscription } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
-  const { data: topics, isLoading } = useTopics()
+  const readOnly = useReadOnly()
+  const { data: topics, isLoading, error, refetch, isFetching } = useTopics()
   const topic = topics?.find(t => t.name === name)
 
-  const { data: subs, refetch: refetchSubs } = useSubscriptions(name ?? '', true)
+  const { data: subs, refetch: refetchSubs, error: subsError, isFetching: subsFetching, isLoading: subsLoading } = useSubscriptions(name ?? '', true)
   const sub = subs?.find(s => s.name === subscription)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
   const [skip, setSkip] = useState(0)
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined])
   const take = 25
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [inspect, setInspect] = useState<string | undefined>()
@@ -62,6 +69,7 @@ const TopicDetailContent = () => {
     state: messageState,
     skip,
     take,
+    cursor: cursors[skip / take],
     enabled: !!name && !!subscription,
   })
 
@@ -83,9 +91,13 @@ const TopicDetailContent = () => {
   }
 
   const handleCreateSub = async (payload: { name: string; maxDeliveryCount?: number; lockDuration?: string; defaultTtl?: string }) => {
-    await createSubscription.mutateAsync(payload)
-    setCreateSubOpen(false)
-    refetchSubs()
+    try {
+      await createSubscription.mutateAsync(payload)
+      setCreateSubOpen(false)
+      refetchSubs()
+    } catch (error) {
+      notifications.show({ title: 'Create subscription failed', message: apiErrorMessage(error), color: 'red' })
+    }
   }
 
   const handleDeleteSub = async () => {
@@ -105,13 +117,20 @@ const TopicDetailContent = () => {
 
   if (!name) return <Text>No topic selected.</Text>
   if (isLoading && !topic) return <Loader size="sm" />
+  if (error && !topic) return <QueryError error={error} onRetry={() => { void refetch() }} retrying={isFetching} />
   if (!topic) return <Text>Topic not found.</Text>
+  if (subscription && !sub) {
+    if (subsLoading) return <Loader size="sm" />
+    if (subsError) return <QueryError error={subsError} onRetry={() => { void refetchSubs() }} retrying={subsFetching} />
+    return <Text>Subscription not found.</Text>
+  }
 
   const renderSubscriptionList = () => (
     <section aria-label="Subscriptions">
+      <QueryError error={subsError} stale={!!subs} retrying={subsFetching} onRetry={() => { void refetchSubs() }} />
       <Group justify="space-between" align="center" mb="sm">
         <Text fw={600}>Subscriptions</Text>
-        <Button variant="subtle" onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
+        <Button disabled={readOnly} variant="subtle" onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
       </Group>
       <ScrollArea>
       <Table
@@ -167,6 +186,8 @@ const TopicDetailContent = () => {
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale retrying={isFetching} onRetry={() => { void refetch() }} />
+      {subscription && <QueryError error={subsError} stale={!!subs} retrying={subsFetching} onRetry={() => { void refetchSubs() }} />}
       <EntityHeader
         name={showSubscriptionDetail ? `${topic.name} / ${sub?.name}` : topic.name}
         type={showSubscriptionDetail ? 'subscription' : 'topic'}
@@ -199,6 +220,7 @@ const TopicDetailContent = () => {
               setMessageState(state)
               setSelectedIds([])
               setSkip(0)
+              setCursors([undefined])
             }}
             activeCount={sub?.activeMessageCount}
             deadLetterCount={sub?.deadLetterMessageCount}
@@ -213,7 +235,7 @@ const TopicDetailContent = () => {
                 color="red"
                 variant="subtle"
                 leftSection={<IconTrash size={16} />}
-                disabled={purgeMessages.isPending || !sub?.activeMessageCount}
+                disabled={readOnly || purgeMessages.isPending || !sub?.activeMessageCount}
                 onClick={() => setPurgeTarget(messageScope)}
               >
                 Purge active messages
@@ -226,7 +248,9 @@ const TopicDetailContent = () => {
                   checked={removeFromDlq}
                   onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
                 />
-                <Button
+                <ConfirmedActionButton
+                  entity={`${name}/${subscription}`}
+                  description={`Replay ${selectedIds.length ? `${selectedIds.length} selected messages` : 'every DLQ message'}. Originals will ${removeFromDlq ? 'be removed' : 'remain in the DLQ'}.`}
                   variant="subtle"
                   leftSection={<IconPlayerPlay size={16} />}
                   disabled={dlqOperationPending || (selectedIds.length === 0 && !messages.data?.items.length)}
@@ -245,8 +269,10 @@ const TopicDetailContent = () => {
                   }
                 >
                   {selectedIds.length ? 'Replay selected' : 'Replay all'}
-                </Button>
-                <Button
+                </ConfirmedActionButton>
+                <ConfirmedActionButton
+                  entity={`${name}/${subscription}`}
+                  description={`Permanently delete ${selectedIds.length} selected DLQ messages. This cannot be undone.`}
                   color="red"
                   variant="subtle"
                   leftSection={<IconTrash size={16} />}
@@ -266,7 +292,7 @@ const TopicDetailContent = () => {
                       },
                     )
                   }
-                >Delete selected DLQ</Button>
+                >Delete selected DLQ</ConfirmedActionButton>
               </Group>
             )}
           </Group>
@@ -274,12 +300,16 @@ const TopicDetailContent = () => {
           <MessageGrid
             messages={messages?.data}
             loading={messages?.isLoading}
+            error={messages.error}
+            retrying={messages.isFetching}
+            onRetry={() => { void messages.refetch() }}
             state={messageState}
             skip={skip}
             take={take}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
             onPageChange={(next) => {
+              if (next > skip) setCursors([...cursors.slice(0, skip / take + 1), messages.data?.nextSequenceNumber ?? undefined])
               setSkip(Math.max(0, next))
               setSelectedIds([])
             }}
@@ -342,15 +372,16 @@ const TopicDetailContent = () => {
         open={deleteTopicOpen}
         onOpenChange={setDeleteTopicOpen}
         title={`Delete topic ${topic.name}?`}
+        confirmationText={topic.name}
         description="Deleting the topic removes all subscriptions and messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteTopicOpen(false)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDeleteTopic}>
+          <ConfirmSubmitButton color="red" onClick={handleDeleteTopic}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
 
@@ -358,15 +389,16 @@ const TopicDetailContent = () => {
         open={deleteSubOpen}
         onOpenChange={setDeleteSubOpen}
         title={`Delete subscription ${subscription}?`}
+        confirmationText={subscription}
         description="Deleting the subscription removes its messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteSubOpen(false)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDeleteSub}>
+          <ConfirmSubmitButton color="red" onClick={handleDeleteSub}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
 
@@ -374,13 +406,14 @@ const TopicDetailContent = () => {
         open={!!purgeTarget}
         onOpenChange={(open) => !open && !purgeMessages.isPending && setPurgeTarget(undefined)}
         title={`Purge active messages in ${purgeTarget?.type === 'subscription' ? purgeTarget.subscription : subscription}?`}
+        confirmationText={subscription}
         description="This permanently deletes every active (non-dead-lettered) message in the subscription."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" disabled={purgeMessages.isPending} onClick={() => setPurgeTarget(undefined)}>
             Cancel
           </Button>
-          <Button
+          <ConfirmSubmitButton
             color="red"
             disabled={!purgeTarget || purgeMessages.isPending}
             loading={purgeMessages.isPending}
@@ -405,7 +438,7 @@ const TopicDetailContent = () => {
             }
           >
             Purge
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
     </Stack>

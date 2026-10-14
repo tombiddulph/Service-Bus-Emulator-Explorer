@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Button, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core'
 import MessageBodyEditor from '../MessageBodyEditor'
 import MessagePropertiesTable from '../MessagePropertiesTable'
+import ConfirmSubmitButton from './ConfirmSubmitButton'
 
 interface SendMessageDialogProps {
   open: boolean
@@ -114,9 +115,9 @@ const SendMessageDialog = ({ open, onOpenChange, onSubmit, theme }: SendMessageD
           <Button variant="default" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={!body}>
+          <ConfirmSubmitButton onClick={handleSubmit} disabled={!body}>
             Send
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </Stack>
     </Modal>

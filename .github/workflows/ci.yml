@@ -78,6 +78,23 @@ jobs:
         working-directory: app/sb-explorer-ui
         run: npm run build
 
+      - name: Lint and test frontend
+        working-directory: app/sb-explorer-ui
+        run: |
+          npm run lint
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-diagnostics
+          path: |
+            app/sb-explorer-ui/playwright-report
+            app/sb-explorer-ui/test-results
+
       - name: Restore .NET dependencies
         run: dotnet restore -r linux-musl-x64
 
@@ -90,7 +107,15 @@ jobs:
             -p:InformationalVersion=${{ needs.version.outputs.semVer }}
 
       - name: Run tests
+        env:
+          OPENAPI_OUTPUT: ${{ github.workspace }}/artifacts/openapi.json
         run: dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release
+
+      - name: Verify generated API contracts
+        working-directory: app/sb-explorer-ui
+        run: |
+          npm run api:generate
+          git diff --exit-code -- src/api/generated.ts
 
   # Build Docker image on PRs (no push) to verify it compiles
   docker-build:

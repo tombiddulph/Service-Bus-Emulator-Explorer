@@ -23,16 +23,22 @@ import type { MessageScope, MessageState, ReplayDlqResult } from '../api/types'
 import { useAppContext } from '../AppContext'
 import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
+import QueryError from '../components/QueryError'
+import ConfirmedActionButton from '../components/dialogs/ConfirmedActionButton'
+import ConfirmSubmitButton from '../components/dialogs/ConfirmSubmitButton'
+import { useReadOnly } from '../api/hooks'
 
 const QueueDetailContent = () => {
   const { name } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
-  const { data: queues, isLoading } = useQueues()
+  const readOnly = useReadOnly()
+  const { data: queues, isLoading, error, refetch, isFetching } = useQueues()
   const queue = queues?.find(q => q.name === name)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
   const [skip, setSkip] = useState(0)
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined])
   const take = 25
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [inspect, setInspect] = useState<string | undefined>()
@@ -46,6 +52,7 @@ const QueueDetailContent = () => {
     state: messageState,
     skip,
     take,
+    cursor: cursors[skip / take],
     enabled: !!name,
   })
 
@@ -73,10 +80,12 @@ const QueueDetailContent = () => {
 
   if (!name) return <Text>No queue selected.</Text>
   if (isLoading && !queue) return <Loader size="sm" />
+  if (error && !queue) return <QueryError error={error} onRetry={() => { void refetch() }} retrying={isFetching} />
   if (!queue) return <Text>Queue not found.</Text>
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale retrying={isFetching} onRetry={() => { void refetch() }} />
       <EntityHeader
         name={queue.name}
         type="queue"
@@ -107,6 +116,7 @@ const QueueDetailContent = () => {
             setMessageState(state)
             setSelectedIds([])
             setSkip(0)
+            setCursors([undefined])
           }}
           activeCount={queue.activeMessageCount}
           deadLetterCount={queue.deadLetterMessageCount}
@@ -121,7 +131,7 @@ const QueueDetailContent = () => {
                 color="red"
                 variant="subtle"
                 leftSection={<IconTrash size={16} />}
-                disabled={purgeMessages.isPending || !queue.activeMessageCount}
+                disabled={readOnly || purgeMessages.isPending || !queue.activeMessageCount}
                 onClick={() => setPurgeTarget({ type: 'queue', name })}
               >
                 Purge active messages
@@ -134,7 +144,9 @@ const QueueDetailContent = () => {
                   checked={removeFromDlq}
                   onChange={(event) => setRemoveFromDlq(event.currentTarget.checked)}
                 />
-                <Button
+                <ConfirmedActionButton
+                  entity={name}
+                  description={`Replay ${selectedIds.length ? `${selectedIds.length} selected messages` : 'every DLQ message'}. Originals will ${removeFromDlq ? 'be removed' : 'remain in the DLQ'}.`}
                   variant="subtle"
                   leftSection={<IconPlayerPlay size={16} />}
                    disabled={dlqOperationPending || (selectedIds.length === 0 && !messages.data?.items.length)}
@@ -153,8 +165,10 @@ const QueueDetailContent = () => {
                   }
                 >
                   {selectedIds.length ? 'Replay selected' : 'Replay all'}
-                </Button>
-                <Button
+                </ConfirmedActionButton>
+                <ConfirmedActionButton
+                  entity={name}
+                  description={`Permanently delete ${selectedIds.length} selected DLQ messages. This cannot be undone.`}
                   color="red"
                   variant="subtle"
                   leftSection={<IconTrash size={16} />}
@@ -174,7 +188,7 @@ const QueueDetailContent = () => {
                       },
                     )
                   }
-                >Delete selected DLQ</Button>
+                >Delete selected DLQ</ConfirmedActionButton>
               </Group>
             )}
         </Group>
@@ -182,12 +196,16 @@ const QueueDetailContent = () => {
         <MessageGrid
           messages={messages.data}
           loading={messages.isLoading}
+          error={messages.error}
+          retrying={messages.isFetching}
+          onRetry={() => { void messages.refetch() }}
           state={messageState}
           skip={skip}
           take={take}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onPageChange={(next) => {
+            if (next > skip) setCursors([...cursors.slice(0, skip / take + 1), messages.data?.nextSequenceNumber ?? undefined])
             setSkip(Math.max(0, next))
             setSelectedIds([])
           }}
@@ -247,15 +265,16 @@ const QueueDetailContent = () => {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title={`Delete queue ${queue.name}?`}
+        confirmationText={queue.name}
         description="Deleting the queue removes all messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteOpen(false)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDelete}>
+          <ConfirmSubmitButton color="red" onClick={handleDelete}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
 
@@ -263,13 +282,14 @@ const QueueDetailContent = () => {
         open={!!purgeTarget}
         onOpenChange={(open) => !open && !purgeMessages.isPending && setPurgeTarget(undefined)}
         title={`Purge active messages in ${purgeTarget?.type === 'queue' ? purgeTarget.name : queue.name}?`}
+        confirmationText={queue.name}
         description="This permanently deletes every active (non-dead-lettered) message in the queue."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" disabled={purgeMessages.isPending} onClick={() => setPurgeTarget(undefined)}>
             Cancel
           </Button>
-          <Button
+          <ConfirmSubmitButton
             color="red"
             disabled={!purgeTarget || purgeMessages.isPending}
             loading={purgeMessages.isPending}
@@ -297,7 +317,7 @@ const QueueDetailContent = () => {
             }
           >
             Purge
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
     </Stack>

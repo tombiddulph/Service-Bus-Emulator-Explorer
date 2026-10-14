@@ -5,6 +5,7 @@ import MessageBodyEditor from './MessageBodyEditor'
 import MessagePropertiesTable from './MessagePropertiesTable'
 import { useAppContext } from '../AppContext'
 import SideDrawer from './SideDrawer'
+import ConfirmSubmitButton from './dialogs/ConfirmSubmitButton'
 
 interface MessageDetailPanelProps {
   message?: MessageInfo
@@ -67,7 +68,7 @@ const MessageDetailPanel = ({ message, open, onOpenChange, editable = false, onS
           >
             Cancel
           </Button>
-          <Button loading={pending} disabled={pending} onClick={() => onSaveAndRequeue?.(editBody, removeFromDlq)}>Save &amp; Requeue</Button>
+          <ConfirmSubmitButton loading={pending} disabled={pending} onClick={() => onSaveAndRequeue?.(editBody, removeFromDlq)}>Save &amp; Requeue</ConfirmSubmitButton>
         </Group>
       )}
     </SideDrawer>

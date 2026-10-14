@@ -4,6 +4,7 @@ import { IconMessageDots, IconPlus, IconRefresh, IconSearch, IconTopologyStar } 
 import type { EntityStatus } from '../api/types'
 import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import StatusPill from './StatusPill'
+import { useReadOnly } from '../api/hooks'
 
 export interface EntityRow {
   name: string
@@ -12,8 +13,8 @@ export interface EntityRow {
   deadLetterMessageCount: number
   activeMessageCountIsExact?: boolean
   deadLetterMessageCountIsExact?: boolean
-  scheduledMessageCount?: number
-  createdAt?: string
+  scheduledMessageCount?: number | null
+  createdAt?: string | null
 }
 
 interface EntityTableProps<T extends EntityRow> {
@@ -83,6 +84,7 @@ const EntityTable = <T extends EntityRow>({
   emptyState,
 }: EntityTableProps<T>) => {
   const [filter, setFilter] = useState('')
+  const readOnly = useReadOnly()
   const list = (items ?? []).filter(item => item.name.toLowerCase().includes(filter.toLowerCase()))
   const Icon = title === 'Queues' ? IconMessageDots : IconTopologyStar
 
@@ -94,7 +96,7 @@ const EntityTable = <T extends EntityRow>({
       </div>
       <div className="portal-command-bar" role="toolbar" aria-label={`${title} commands`}>
         {onCreate && (
-          <Button leftSection={<IconPlus size={16} />} onClick={onCreate} variant="subtle">
+          <Button disabled={readOnly} leftSection={<IconPlus size={16} />} onClick={onCreate} variant="subtle">
             Create
           </Button>
         )}

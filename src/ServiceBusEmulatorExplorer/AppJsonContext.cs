@@ -13,6 +13,7 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(List<SubscriptionInfo>))]
 [JsonSerializable(typeof(IReadOnlyList<SubscriptionInfo>))]
 [JsonSerializable(typeof(EnvironmentInfo))]
+[JsonSerializable(typeof(ConnectionInfo))]
 [JsonSerializable(typeof(MessageInfo))]
 [JsonSerializable(typeof(PagedMessages))]
 [JsonSerializable(typeof(SendMessageRequest))]
@@ -25,4 +26,8 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(ReplayDlqResult))]
 [JsonSerializable(typeof(DeleteDlqResult))]
 [JsonSerializable(typeof(PurgeResult))]
+[JsonSerializable(typeof(Microsoft.AspNetCore.Http.HttpValidationProblemDetails))]
+[JsonSerializable(typeof(Microsoft.AspNetCore.Mvc.ProblemDetails))]
+[JsonSerializable(typeof(CaseInsensitiveEnum<PeekMode>))]
+[JsonSerializable(typeof(CaseInsensitiveEnum<MessageState>))]
 public partial class AppJsonContext : JsonSerializerContext;

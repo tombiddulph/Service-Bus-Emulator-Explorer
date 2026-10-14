@@ -4,21 +4,30 @@ import { Button, Group, Stack, Text } from '@mantine/core'
 import EntityTable from '../components/EntityTable'
 import ConfirmActionDialog from '../components/dialogs/ConfirmActionDialog'
 import CreateTopicDialog from '../components/dialogs/CreateTopicDialog'
-import { useCreateTopic, useDeleteTopic, useTopics } from '../api/hooks'
+import { useCreateTopic, useDeleteTopic, useTopics, useReadOnly } from '../api/hooks'
 import type { TopicInfo } from '../api/types'
+import QueryError from '../components/QueryError'
+import { notifications } from '@mantine/notifications'
+import { apiErrorMessage } from '../utils/apiError'
+import ConfirmSubmitButton from '../components/dialogs/ConfirmSubmitButton'
 
 const Topics = () => {
   const navigate = useNavigate()
-  const { data: topics, isLoading, refetch } = useTopics()
+  const readOnly = useReadOnly()
+  const { data: topics, isLoading, refetch, error, isFetching } = useTopics()
   const createTopic = useCreateTopic()
   const deleteTopic = useDeleteTopic()
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<TopicInfo | null>(null)
 
   const handleCreate = async (payload: { name: string }) => {
-    await createTopic.mutateAsync(payload)
-    setCreateOpen(false)
-    refetch()
+    try {
+      await createTopic.mutateAsync(payload)
+      setCreateOpen(false)
+      refetch()
+    } catch (error) {
+      notifications.show({ title: 'Create topic failed', message: apiErrorMessage(error), color: 'red' })
+    }
   }
 
   const handleDelete = async () => {
@@ -30,6 +39,7 @@ const Topics = () => {
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale={!!topics} retrying={isFetching} onRetry={() => { void refetch() }} />
       <EntityTable
         title="Topics"
         items={topics}
@@ -39,8 +49,8 @@ const Topics = () => {
         onRowClick={(t) => navigate(`/topics/${t.name}`)}
         emptyState={
           <Group gap="xs">
-            <Text>No topics yet.</Text>
-            <Button variant="subtle" onClick={() => setCreateOpen(true)}>
+             <Text>{error ? 'Topics could not be loaded.' : 'No topics yet.'}</Text>
+            <Button disabled={readOnly} variant="subtle" onClick={() => setCreateOpen(true)}>
               Create one
             </Button>
           </Group>
@@ -53,15 +63,16 @@ const Topics = () => {
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title={`Delete topic ${deleteTarget?.name ?? ''}`}
+        confirmationText={deleteTarget?.name}
         description="This will remove the topic and its messages."
       >
         <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={() => setDeleteTarget(null)}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleDelete} disabled={!deleteTarget}>
+          <ConfirmSubmitButton color="red" onClick={handleDelete} disabled={!deleteTarget}>
             Delete
-          </Button>
+          </ConfirmSubmitButton>
         </Group>
       </ConfirmActionDialog>
     </Stack>

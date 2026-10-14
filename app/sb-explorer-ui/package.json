@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "cross-env VITE_API_BASE_URL=http://localhost:5123/api VITE_USE_MOCK=false VITE_USE_MOCK_QUEUES=false VITE_USE_MOCK_TOPICS=false VITE_USE_MOCK_SUBSCRIPTIONS=false VITE_USE_MOCK_MESSAGES=false VITE_USE_MOCK_DLQ=false vite",
-    "dev:mock": "cross-env VITE_API_BASE_URL=/api VITE_USE_MOCK=false vite",
+    "dev:mock": "cross-env VITE_API_BASE_URL=/api VITE_USE_MOCK=true vite",
     "dev:partial": "cross-env VITE_API_BASE_URL=http://localhost:5123/api VITE_USE_MOCK=false VITE_USE_MOCK_QUEUES=false VITE_USE_MOCK_TOPICS=false VITE_USE_MOCK_SUBSCRIPTIONS=false VITE_USE_MOCK_MESSAGES=false VITE_USE_MOCK_DLQ=true vite",
     "build": "cross-env VITE_API_BASE_URL=/api VITE_USE_MOCK=false VITE_USE_MOCK_QUEUES=false VITE_USE_MOCK_TOPICS=false VITE_USE_MOCK_SUBSCRIPTIONS=false VITE_USE_MOCK_MESSAGES=false VITE_USE_MOCK_DLQ=false tsc -b && vite build",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "api:generate": "openapi-typescript ../../artifacts/openapi.json -o src/api/generated.ts --default-non-nullable false --empty-objects-unknown",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -34,6 +38,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.64.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
@@ -43,8 +51,11 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "jsdom": "^30.1.2",
+    "openapi-typescript": "^7.13.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^5.0.4"
   }
 }

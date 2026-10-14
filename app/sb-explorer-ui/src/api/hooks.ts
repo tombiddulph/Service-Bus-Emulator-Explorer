@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
+import { useRefreshSettings } from './refreshSettings'
 import { apiClient, dlqPath, messagePath, purgePath, replayDlqPath } from './client'
 import type {
   DeleteDlqResult,
@@ -13,15 +14,20 @@ import type {
   SendScope,
   SubscriptionInfo,
   TopicInfo,
+  CreateQueueRequest,
+  CreateTopicRequest,
+  CreateSubscriptionRequest,
+  SendMessageRequest,
+  EnvironmentInfo,
+  ConnectionInfo,
 } from './types'
 
-const listRefetchMs = 8000
 const dlqOperationTimeoutMs = 45000
 
 export const useEnvironment = () =>
   useQuery({
     queryKey: ['environment'],
-    queryFn: async () => (await apiClient.get<{ name: string }>('/environment')).data.name,
+    queryFn: async ({ signal }) => (await apiClient.get<EnvironmentInfo>('/environment', { signal })).data,
     staleTime: Infinity,
     // The API can still be warming up on the very first page load, so keep retrying instead of failing permanently.
     retry: 10,
@@ -31,29 +37,44 @@ export const useEnvironment = () =>
     refetchOnReconnect: true,
   })
 
+export const useReadOnly = () => useEnvironment().data?.readOnly ?? true
+
+export const useConnection = () => useQuery({
+  queryKey: ['connection'],
+  queryFn: async ({ signal }) => (await apiClient.get<ConnectionInfo>('/connection', { signal })).data,
+  refetchInterval: usePollingInterval(),
+  retry: false,
+})
+
+function usePollingInterval(): number | false {
+  const settings = useRefreshSettings()
+  const environment = useEnvironment()
+  return settings.paused ? false : settings.intervalMs ?? environment.data?.refreshIntervalMs ?? 8000
+}
+
 const scopeKey = (scope: MessageScope) =>
   scope.type === 'queue' ? `queue:${scope.name}` : `subscription:${scope.topic}:${scope.subscription}`
 
 export const useQueues = () =>
   useQuery({
     queryKey: ['queues'],
-    queryFn: async () => (await apiClient.get<QueueInfo[]>('/queues')).data,
-    refetchInterval: listRefetchMs,
+    queryFn: async ({ signal }) => (await apiClient.get<QueueInfo[]>('/queues', { signal })).data,
+    refetchInterval: usePollingInterval(),
   })
 
 export const useTopics = () =>
   useQuery({
     queryKey: ['topics'],
-    queryFn: async () => (await apiClient.get<TopicInfo[]>('/topics')).data,
-    refetchInterval: listRefetchMs,
+    queryFn: async ({ signal }) => (await apiClient.get<TopicInfo[]>('/topics', { signal })).data,
+    refetchInterval: usePollingInterval(),
   })
 
 export const useSubscriptions = (topic: string, enabled = true) =>
   useQuery({
     queryKey: ['subs', topic],
-    queryFn: async () => (await apiClient.get<SubscriptionInfo[]>(`/topics/${topic}/subscriptions`)).data,
+    queryFn: async ({ signal }) => (await apiClient.get<SubscriptionInfo[]>(`/topics/${encodeURIComponent(topic)}/subscriptions`, { signal })).data,
     enabled: !!topic && enabled,
-    refetchInterval: listRefetchMs,
+    refetchInterval: usePollingInterval(),
   })
 
 interface MessagesQuery {
@@ -61,6 +82,7 @@ interface MessagesQuery {
   state: MessageState
   skip: number
   take: number
+  cursor?: string
   enabled?: boolean
 }
 
@@ -69,25 +91,26 @@ const isScopeValid = (scope: MessageScope) => {
   return !!scope.topic && !!scope.subscription
 }
 
-export const useMessages = ({ scope, state, skip, take, enabled = true }: MessagesQuery) =>
+export const useMessages = ({ scope, state, skip, take, cursor, enabled = true }: MessagesQuery) =>
   useQuery({
-    queryKey: ['messages', scopeKey(scope), state, skip, take],
-    queryFn: async () =>
+    queryKey: ['messages', scopeKey(scope), state, skip, take, cursor],
+    queryFn: async ({ signal }) =>
       (
         await apiClient.get<PagedResult<MessageInfo>>(messagePath(scope), {
-          params: { mode: 'peek', state, skip, take },
+          params: { mode: 'peek', state, skip: cursor ? 0 : skip, take, fromSequenceNumber: cursor },
+          signal,
         })
       ).data,
     enabled: enabled && isScopeValid(scope),
-    refetchInterval: listRefetchMs,
-    refetchIntervalInBackground: true,
+    refetchInterval: usePollingInterval(),
+    refetchIntervalInBackground: false,
     refetchOnMount: 'always',
   })
 
 export const useCreateQueue = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: Partial<QueueInfo> & { name: string }) => {
+    mutationFn: async (payload: CreateQueueRequest) => {
       await apiClient.post('/queues', payload)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['queues'] }),
@@ -97,7 +120,7 @@ export const useCreateQueue = () => {
 export const useCreateTopic = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: Partial<TopicInfo> & { name: string }) => {
+    mutationFn: async (payload: CreateTopicRequest) => {
       await apiClient.post('/topics', payload)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['topics'] }),
@@ -107,7 +130,7 @@ export const useCreateTopic = () => {
 export const useCreateSubscription = (topic: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: Partial<SubscriptionInfo> & { name: string }) => {
+    mutationFn: async (payload: CreateSubscriptionRequest) => {
       await apiClient.post(`/topics/${topic}/subscriptions`, payload)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', topic] }),
@@ -144,12 +167,8 @@ export const useDeleteSubscription = (topic: string) => {
   })
 }
 
-interface SendMessageInput {
+interface SendMessageInput extends SendMessageRequest {
   scope: SendScope
-  body: string
-  contentType?: string
-  userProperties?: Record<string, unknown>
-  sessionId?: string
 }
 
 export const useSendMessage = () => {

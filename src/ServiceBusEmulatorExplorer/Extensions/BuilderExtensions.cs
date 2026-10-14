@@ -68,6 +68,7 @@ public static class BuilderExtensions
                 metrics.SetResourceBuilder(resourceBuilder);
                 metrics.AddAspNetCoreInstrumentation();
                 metrics.AddRuntimeInstrumentation();
+                metrics.AddMeter(ExplorerMetrics.MeterName);
                 if (!string.IsNullOrEmpty(otlpConfig.Endpoint))
                 {
                     metrics.AddOtlpExporter(opts =>
