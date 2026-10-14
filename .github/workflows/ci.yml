@@ -78,6 +78,23 @@ jobs:
         working-directory: app/sb-explorer-ui
         run: npm run build
 
+      - name: Lint and test frontend
+        working-directory: app/sb-explorer-ui
+        run: |
+          npm run lint
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-diagnostics
+          path: |
+            app/sb-explorer-ui/playwright-report
+            app/sb-explorer-ui/test-results
+
       - name: Restore .NET dependencies
         run: dotnet restore -r linux-musl-x64
 

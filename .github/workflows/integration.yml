@@ -1,0 +1,51 @@
+name: Emulator integration
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  published-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SQL_PASSWORD: "IntegrationOnly-Strong!Pass2026"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/ServiceBusEmulatorExplorer/Dockerfile
+          load: true
+          tags: sb-explorer:integration
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start disposable emulator and AOT image
+        run: docker compose -p integration -f test/compose.integration.yaml up -d
+      - name: Wait for emulator administration
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://localhost:8080/api/queues >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Exercise real broker and published application
+        run: dotnet run --project test/ServiceBusEmulatorExplorer.Integration --configuration Release
+      - name: Capture container logs
+        if: always()
+        run: docker compose -p integration -f test/compose.integration.yaml logs --no-color > integration-containers.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: integration-diagnostics
+          path: integration-containers.log
+      - name: Stop disposable stack
+        if: always()
+        run: docker compose -p integration -f test/compose.integration.yaml down --volumes

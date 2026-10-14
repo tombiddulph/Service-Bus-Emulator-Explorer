@@ -1,0 +1,24 @@
+services:
+  explorer:
+    image: sb-explorer:integration
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ServiceBus__ConnectionString: "Endpoint=sb://emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+      ServiceBus__AdministrationConnectionString: "Endpoint=sb://emulator:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+  emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    ports:
+      - "127.0.0.1:5672:5672"
+    environment:
+      SQL_SERVER: sql
+      MSSQL_SA_PASSWORD: "${SQL_PASSWORD}"
+      ACCEPT_EULA: "Y"
+    depends_on:
+      - sql
+  sql:
+    image: mcr.microsoft.com/mssql/server:latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${SQL_PASSWORD}"
