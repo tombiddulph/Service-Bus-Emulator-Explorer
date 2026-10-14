@@ -13,9 +13,11 @@ public static class Helpers
         ServiceBusEndpointCache endpointCache,
         ServiceBusReceiver receiver,
         long maxToCount = 1000,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
     {
-        using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(10));
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout ?? TimeSpan.FromSeconds(10));
 
         long count = 0;
         long fromSequenceNumber = 0;
@@ -48,7 +50,7 @@ public static class Helpers
                 isExact = probe.Count == 0;
             }
         }
-        catch (Exception)
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // best-effort count; whatever was scanned before the timeout/error is a lower bound, not exact
             isExact = false;
@@ -155,7 +157,7 @@ public readonly record struct CaseInsensitiveEnum<T>(T Value) where T : struct, 
 {
     public static bool TryParse(string? value, out CaseInsensitiveEnum<T> result)
     {
-        if (Enum.TryParse<T>(value, ignoreCase: true, out var parsed))
+        if (Enum.TryParse<T>(value, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed))
         {
             result = new CaseInsensitiveEnum<T>(parsed);
             return true;

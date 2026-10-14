@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Group, Stack, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import axios from 'axios'
+import { apiErrorMessage } from '../utils/apiError'
+import QueryError from '../components/QueryError'
 import EntityTable from '../components/EntityTable'
 import ConfirmActionDialog from '../components/dialogs/ConfirmActionDialog'
 import CreateQueueDialog from '../components/dialogs/CreateQueueDialog'
@@ -11,7 +12,7 @@ import type { QueueInfo } from '../api/types'
 
 const Queues = () => {
   const navigate = useNavigate()
-  const { data: queues, isLoading, refetch } = useQueues()
+  const { data: queues, isLoading, refetch, error, isFetching } = useQueues()
   const createQueue = useCreateQueue()
   const deleteQueue = useDeleteQueue()
   const [createOpen, setCreateOpen] = useState(false)
@@ -23,10 +24,7 @@ const Queues = () => {
       setCreateOpen(false)
       refetch()
     } catch (error) {
-      const responseData = axios.isAxiosError(error)
-        ? (error.response?.data as { detail?: string; error?: string } | undefined)
-        : undefined
-      const message = responseData?.detail || responseData?.error || (error instanceof Error ? error.message : 'Unable to create queue.')
+      const message = apiErrorMessage(error)
       notifications.show({ title: 'Create queue failed', message, color: 'red' })
     }
   }
@@ -40,6 +38,7 @@ const Queues = () => {
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale={!!queues} retrying={isFetching} onRetry={() => { void refetch() }} />
       <EntityTable
         title="Queues"
         items={queues}
@@ -49,7 +48,7 @@ const Queues = () => {
         onRowClick={(q) => navigate(`/queues/${q.name}`)}
         emptyState={
           <Group gap="xs">
-            <Text>No queues yet.</Text>
+             <Text>{error ? 'Queues could not be loaded.' : 'No queues yet.'}</Text>
             <Button variant="subtle" onClick={() => setCreateOpen(true)}>
               Create one
             </Button>

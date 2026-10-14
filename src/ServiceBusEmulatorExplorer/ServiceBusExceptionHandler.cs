@@ -16,6 +16,28 @@ public sealed class ServiceBusExceptionHandler : IExceptionHandler
             return false;
         }
 
+        if (exception is BadHttpRequestException badRequest)
+        {
+            await WriteProblemDetailsAsync(httpContext, new ProblemDetails
+            {
+                Status = badRequest.StatusCode,
+                Title = ReasonPhrases.GetReasonPhrase(badRequest.StatusCode),
+                Detail = "The request contains an invalid body or query parameter."
+            }, exception);
+            return true;
+        }
+
+        if (exception is TimeoutException)
+        {
+            await WriteProblemDetailsAsync(httpContext, new ProblemDetails
+            {
+                Status = StatusCodes.Status504GatewayTimeout,
+                Title = "Gateway Timeout",
+                Detail = "Service Bus timed out. Try again."
+            }, exception);
+            return true;
+        }
+
         if (exception is ServiceBusException serviceBusException)
         {
             var (statusCode, title, detail) = MapServiceBusFailure(serviceBusException);
@@ -72,6 +94,7 @@ public sealed class ServiceBusExceptionHandler : IExceptionHandler
             ServiceBusFailureReason.QuotaExceeded => (StatusCodes.Status429TooManyRequests, "Quota Exceeded"),
             ServiceBusFailureReason.ServiceBusy => (StatusCodes.Status503ServiceUnavailable, "Service Unavailable"),
             ServiceBusFailureReason.ServiceTimeout => (StatusCodes.Status504GatewayTimeout, "Gateway Timeout"),
+            ServiceBusFailureReason.ServiceCommunicationProblem => (StatusCodes.Status503ServiceUnavailable, "Service Unavailable"),
       
             _ => (StatusCodes.Status400BadRequest, exception.Reason.ToString()),
         };
@@ -85,6 +108,7 @@ public sealed class ServiceBusExceptionHandler : IExceptionHandler
             ServiceBusFailureReason.QuotaExceeded => "The Service Bus quota has been exceeded.",
             ServiceBusFailureReason.ServiceBusy => "Service Bus is busy. Try again later.",
             ServiceBusFailureReason.ServiceTimeout => "Service Bus timed out. Try again.",
+            ServiceBusFailureReason.ServiceCommunicationProblem => "Unable to connect to Service Bus. Check the emulator connection and try again.",
             _ => FormatServiceBusDetail(exception.Message)
         };
 

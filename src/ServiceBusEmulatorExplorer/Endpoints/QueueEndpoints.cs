@@ -30,7 +30,11 @@ public static class QueueEndpoints
         group.MapGet("/{name}/messages", PeekQueueMessages)
             .WithName("PeekQueueMessages")
             .WithSummary("Peek queue messages")
-            .Produces<PagedMessages>();
+            .Produces<PagedMessages>()
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .ProducesProblem(StatusCodes.Status504GatewayTimeout);
 
         group.MapPost("/{name}/messages", SendQueueMessage)
             .WithName("SendQueueMessage")
@@ -51,9 +55,10 @@ public static class QueueEndpoints
 
     private static async Task<IResult> ListQueues(
         [FromServices] ServiceBusAdministrationClient client,
-        [FromServices] ServiceBusEndpointCache endpointCache)
+        [FromServices] ServiceBusEndpointCache endpointCache,
+        CancellationToken cancellationToken)
     {
-        var queuesRuntimeProperties = client.GetQueuesRuntimePropertiesAsync();
+        var queuesRuntimeProperties = client.GetQueuesRuntimePropertiesAsync(cancellationToken);
 
         if (queuesRuntimeProperties is null)
         {
@@ -67,18 +72,19 @@ public static class QueueEndpoints
             QueueProperties? queueProps = null;
             try
             {
-                var queueResponse = await client.GetQueueAsync(item.Name);
+                var queueResponse = await client.GetQueueAsync(item.Name, cancellationToken);
                 queueProps = queueResponse?.Value;
             }
-            catch (Exception)
+            catch (Exception exception) when (exception is NotSupportedException or NotImplementedException ||
+                                              exception is RequestFailedException { Status: 501 })
             {
                 // Queue properties may not be available (e.g. emulator limitation)
             }
 
             var activeCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }), cancellationToken: cancellationToken);
             var deadLetterCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }), cancellationToken: cancellationToken);
             await Task.WhenAll(activeCountTask, deadLetterCountTask);
             var activeCount = activeCountTask.Result;
             var deadLetterCount = deadLetterCountTask.Result;
@@ -102,24 +108,20 @@ public static class QueueEndpoints
         return Results.Ok(queues);
     }
 
-    private static async Task<IResult> CreateQueue(CreateQueueRequest request, ServiceBusAdministrationClient client)
+    private static async Task<IResult> CreateQueue(CreateQueueRequest request, ServiceBusAdministrationClient client,
+        CancellationToken cancellationToken)
     {
+        var errors = EntityValidation.Validate(request.Name, maxDeliveryCount: request.MaxDeliveryCount,
+            lockDuration: request.LockDuration, defaultTtl: request.DefaultTtl);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
         var options = new CreateQueueOptions(request.Name)
         {
-            DefaultMessageTimeToLive = request.DefaultTtl switch
-            {
-                _ when TimeSpan.TryParse(request.DefaultTtl, out var parsedTtl) => parsedTtl,
-                _ => TimeSpan.FromDays(14)
-            },
-            LockDuration = request.LockDuration switch
-            {
-                _ when TimeSpan.TryParse(request.LockDuration, out var parsedLockDuration) => parsedLockDuration,
-                _ => TimeSpan.FromMinutes(1)
-            },
+            DefaultMessageTimeToLive = EntityValidation.DurationOrDefault(request.DefaultTtl, TimeSpan.FromDays(14)),
+            LockDuration = EntityValidation.DurationOrDefault(request.LockDuration, TimeSpan.FromMinutes(1)),
             MaxDeliveryCount = request.MaxDeliveryCount ?? 10
         };
 
-        Response<QueueProperties>? response = await client.CreateQueueAsync(options);
+        Response<QueueProperties>? response = await client.CreateQueueAsync(options, cancellationToken);
 
         return response switch
         {
@@ -128,9 +130,9 @@ public static class QueueEndpoints
         };
     }
 
-    private static async Task<IResult> DeleteQueue(string name, ServiceBusAdministrationClient client)
+    private static async Task<IResult> DeleteQueue(string name, ServiceBusAdministrationClient client, CancellationToken cancellationToken)
     {
-        var response = await client.DeleteQueueAsync(name);
+        var response = await client.DeleteQueueAsync(name, cancellationToken);
 
         return Results.StatusCode(response.Status);
     }
@@ -140,9 +142,13 @@ public static class QueueEndpoints
         [FromQuery] CaseInsensitiveEnum<PeekMode> mode,
         [FromQuery] CaseInsensitiveEnum<MessageState> state,
         ServiceBusEndpointCache endpointCache,
+        CancellationToken cancellationToken,
         int skip = 0,
         int take = 25)
     {
+        var errors = MessagePeeking.ValidatePagination(skip, take);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+
         var receiverOptions = new ServiceBusReceiverOptions
         {
             ReceiveMode = ServiceBusReceiveMode.PeekLock,
@@ -151,32 +157,7 @@ public static class QueueEndpoints
 
         var receiver = endpointCache.GetReceiver(name, receiverOptions);
 
-        using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-
-        IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
-        try
-        {
-            await using var _ = await endpointCache.LockAsync(receiver, cancellationTokenSource.Token);
-
-            long fromSequenceNumber = 0;
-            if (skip > 0)
-            {
-                var skipped = await receiver.PeekMessagesAsync(
-                    maxMessages: skip, fromSequenceNumber: 0, cancellationToken: cancellationTokenSource.Token);
-                if (skipped.Count > 0)
-                {
-                    fromSequenceNumber = skipped[^1].SequenceNumber + 1;
-                }
-            }
-
-            messages = await receiver.PeekMessagesAsync(
-                maxMessages: take,
-                fromSequenceNumber: fromSequenceNumber, cancellationToken: cancellationTokenSource.Token);
-        }
-        catch (Exception)
-        {
-            // ignored
-        }
+        var messages = await MessagePeeking.PeekAsync(endpointCache, receiver, skip, take, cancellationToken);
 
         var messageInfos = messages.Select(message => new MessageInfo(
             message.MessageId,
@@ -196,7 +177,7 @@ public static class QueueEndpoints
     }
 
     private static async Task<IResult> SendQueueMessage(string name, SendMessageRequest request,
-        ServiceBusEndpointCache endpointCache)
+        ServiceBusEndpointCache endpointCache, CancellationToken cancellationToken)
     {
         var message = new ServiceBusMessage(request.Body)
         {
@@ -213,7 +194,7 @@ public static class QueueEndpoints
         }
 
         var sender = endpointCache.GetSender(name);
-        await sender.SendMessageAsync(message);
+        await sender.SendMessageAsync(message, cancellationToken);
 
         return Results.Ok();
     }

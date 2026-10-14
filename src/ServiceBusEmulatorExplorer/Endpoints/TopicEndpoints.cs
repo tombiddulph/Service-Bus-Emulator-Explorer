@@ -33,9 +33,10 @@ public static class TopicEndpoints
         return app;
     }
 
-    private static async Task<IResult> ListTopics(ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache)
+    private static async Task<IResult> ListTopics(ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache,
+        CancellationToken cancellationToken)
     {
-        var topicsRuntimeProperties = client.GetTopicsRuntimePropertiesAsync();
+        var topicsRuntimeProperties = client.GetTopicsRuntimePropertiesAsync(cancellationToken);
         if (topicsRuntimeProperties is null)
         {
             return Results.NotFound();
@@ -46,7 +47,7 @@ public static class TopicEndpoints
         await foreach (var item in topicsRuntimeProperties)
         {
             var subscriptionNames = new List<string>();
-            await foreach (var subscription in client.GetSubscriptionsRuntimePropertiesAsync(item.Name))
+            await foreach (var subscription in client.GetSubscriptionsRuntimePropertiesAsync(item.Name, cancellationToken))
             {
                 subscriptionNames.Add(subscription.SubscriptionName);
             }
@@ -54,9 +55,9 @@ public static class TopicEndpoints
             var countResults = await Task.WhenAll(subscriptionNames.Select(async subscriptionName =>
             {
                 var active = await Helpers.CountMessagesAsync(
-                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.None }));
+                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.None }), cancellationToken: cancellationToken);
                 var deadLetter = await Helpers.CountMessagesAsync(
-                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.DeadLetter }));
+                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.DeadLetter }), cancellationToken: cancellationToken);
                 return (Active: active, DeadLetter: deadLetter);
             }));
 
@@ -87,22 +88,27 @@ public static class TopicEndpoints
         return Results.Ok(topics);
     }
 
-    private static async Task<IResult> CreateTopic(CreateTopicRequest request, ServiceBusAdministrationClient client) =>
-        await client.CreateTopicAsync(new CreateTopicOptions(request.Name)) switch
+    private static async Task<IResult> CreateTopic(CreateTopicRequest request, ServiceBusAdministrationClient client,
+        CancellationToken cancellationToken)
+    {
+        var errors = EntityValidation.Validate(request.Name);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+        return await client.CreateTopicAsync(new CreateTopicOptions(request.Name), cancellationToken) switch
         {
             { HasValue: true } => Results.Ok(),
             _ => Results.BadRequest()
         };
+    }
 
-    private static async Task<IResult> DeleteTopic(string name, ServiceBusAdministrationClient client)
+    private static async Task<IResult> DeleteTopic(string name, ServiceBusAdministrationClient client, CancellationToken cancellationToken)
     {
-        var exists = await client.GetTopicAsync(name);
+        var exists = await client.GetTopicAsync(name, cancellationToken);
         if (exists.Value is null)
         {
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
         }
 
-        return (await client.DeleteTopicAsync(name)) switch
+        return (await client.DeleteTopicAsync(name, cancellationToken)) switch
         {
             { IsError: false } => Results.Ok(),
             _ => Results.Problem("Failed to delete topic", statusCode: StatusCodes.Status500InternalServerError, title: "Internal Server Error")
@@ -110,9 +116,9 @@ public static class TopicEndpoints
     }
 
     private static async Task<IResult> SendTopicMessage(string topic, SendMessageRequest request,
-        ServiceBusAdministrationClient adminClient, ServiceBusClient client)
+        ServiceBusAdministrationClient adminClient, ServiceBusClient client, CancellationToken cancellationToken)
     {
-        var exists = await adminClient.GetTopicAsync(topic);
+        var exists = await adminClient.GetTopicAsync(topic, cancellationToken);
         if (exists.Value is null)
         {
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
@@ -132,7 +138,7 @@ public static class TopicEndpoints
         }
 
         await using var sender = client.CreateSender(topic);
-        await sender.SendMessageAsync(message);
+        await sender.SendMessageAsync(message, cancellationToken);
         return Results.Ok();
     }
 }

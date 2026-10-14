@@ -72,10 +72,11 @@ const isScopeValid = (scope: MessageScope) => {
 export const useMessages = ({ scope, state, skip, take, enabled = true }: MessagesQuery) =>
   useQuery({
     queryKey: ['messages', scopeKey(scope), state, skip, take],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       (
         await apiClient.get<PagedResult<MessageInfo>>(messagePath(scope), {
           params: { mode: 'peek', state, skip, take },
+          signal,
         })
       ).data,
     enabled: enabled && isScopeValid(scope),

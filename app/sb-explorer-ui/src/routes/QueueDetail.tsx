@@ -23,12 +23,13 @@ import type { MessageScope, MessageState, ReplayDlqResult } from '../api/types'
 import { useAppContext } from '../AppContext'
 import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
+import QueryError from '../components/QueryError'
 
 const QueueDetailContent = () => {
   const { name } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
-  const { data: queues, isLoading } = useQueues()
+  const { data: queues, isLoading, error, refetch, isFetching } = useQueues()
   const queue = queues?.find(q => q.name === name)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
@@ -73,10 +74,12 @@ const QueueDetailContent = () => {
 
   if (!name) return <Text>No queue selected.</Text>
   if (isLoading && !queue) return <Loader size="sm" />
+  if (error && !queue) return <QueryError error={error} onRetry={() => { void refetch() }} retrying={isFetching} />
   if (!queue) return <Text>Queue not found.</Text>
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale retrying={isFetching} onRetry={() => { void refetch() }} />
       <EntityHeader
         name={queue.name}
         type="queue"
@@ -182,6 +185,9 @@ const QueueDetailContent = () => {
         <MessageGrid
           messages={messages.data}
           loading={messages.isLoading}
+          error={messages.error}
+          retrying={messages.isFetching}
+          onRetry={() => { void messages.refetch() }}
           state={messageState}
           skip={skip}
           take={take}

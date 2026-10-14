@@ -29,15 +29,17 @@ import { formatMessageCount, messageCountTooltip } from '../utils/formatCount'
 import { useAppContext } from '../AppContext'
 import { summarizeReplayResult } from '../utils/replayResult'
 import { summarizeDeleteResult } from '../utils/deleteResult'
+import QueryError from '../components/QueryError'
+import { apiErrorMessage } from '../utils/apiError'
 
 const TopicDetailContent = () => {
   const { name, subscription } = useParams()
   const navigate = useNavigate()
   const { theme } = useAppContext()
-  const { data: topics, isLoading } = useTopics()
+  const { data: topics, isLoading, error, refetch, isFetching } = useTopics()
   const topic = topics?.find(t => t.name === name)
 
-  const { data: subs, refetch: refetchSubs } = useSubscriptions(name ?? '', true)
+  const { data: subs, refetch: refetchSubs, error: subsError, isFetching: subsFetching } = useSubscriptions(name ?? '', true)
   const sub = subs?.find(s => s.name === subscription)
 
   const [messageState, setMessageState] = useState<MessageState>('active')
@@ -83,9 +85,13 @@ const TopicDetailContent = () => {
   }
 
   const handleCreateSub = async (payload: { name: string; maxDeliveryCount?: number; lockDuration?: string; defaultTtl?: string }) => {
-    await createSubscription.mutateAsync(payload)
-    setCreateSubOpen(false)
-    refetchSubs()
+    try {
+      await createSubscription.mutateAsync(payload)
+      setCreateSubOpen(false)
+      refetchSubs()
+    } catch (error) {
+      notifications.show({ title: 'Create subscription failed', message: apiErrorMessage(error), color: 'red' })
+    }
   }
 
   const handleDeleteSub = async () => {
@@ -105,10 +111,12 @@ const TopicDetailContent = () => {
 
   if (!name) return <Text>No topic selected.</Text>
   if (isLoading && !topic) return <Loader size="sm" />
+  if (error && !topic) return <QueryError error={error} onRetry={() => { void refetch() }} retrying={isFetching} />
   if (!topic) return <Text>Topic not found.</Text>
 
   const renderSubscriptionList = () => (
     <section aria-label="Subscriptions">
+      <QueryError error={subsError} stale={!!subs} retrying={subsFetching} onRetry={() => { void refetchSubs() }} />
       <Group justify="space-between" align="center" mb="sm">
         <Text fw={600}>Subscriptions</Text>
         <Button variant="subtle" onClick={() => setCreateSubOpen(true)}>Create subscription</Button>
@@ -167,6 +175,8 @@ const TopicDetailContent = () => {
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale retrying={isFetching} onRetry={() => { void refetch() }} />
+      {subscription && <QueryError error={subsError} stale={!!subs} retrying={subsFetching} onRetry={() => { void refetchSubs() }} />}
       <EntityHeader
         name={showSubscriptionDetail ? `${topic.name} / ${sub?.name}` : topic.name}
         type={showSubscriptionDetail ? 'subscription' : 'topic'}
@@ -274,6 +284,9 @@ const TopicDetailContent = () => {
           <MessageGrid
             messages={messages?.data}
             loading={messages?.isLoading}
+            error={messages.error}
+            retrying={messages.isFetching}
+            onRetry={() => { void messages.refetch() }}
             state={messageState}
             skip={skip}
             take={take}

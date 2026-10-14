@@ -29,7 +29,11 @@ public static class SubscriptionEndpoints
         group.MapGet("/{sub}/messages", PeekSubscriptionMessages)
             .WithName("PeekSubscriptionMessages")
             .WithSummary("Peek subscription messages")
-            .Produces<PagedMessages>();
+            .Produces<PagedMessages>()
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .ProducesProblem(StatusCodes.Status504GatewayTimeout);
 
         group.MapPost("/{sub}/purge", PurgeSubscriptionMessages)
             .WithName("PurgeSubscriptionMessages")
@@ -46,9 +50,9 @@ public static class SubscriptionEndpoints
     private static async Task<IResult> ListSubscriptions(
         string topic,
         ServiceBusAdministrationClient client,
-        ServiceBusEndpointCache endpointCache)
+        ServiceBusEndpointCache endpointCache, CancellationToken cancellationToken)
     {
-        var subscriptionsRuntimeProperties = client.GetSubscriptionsRuntimePropertiesAsync(topic);
+        var subscriptionsRuntimeProperties = client.GetSubscriptionsRuntimePropertiesAsync(topic, cancellationToken);
         if (subscriptionsRuntimeProperties is null)
         {
             return Results.NotFound();
@@ -61,18 +65,19 @@ public static class SubscriptionEndpoints
             SubscriptionProperties? subProps = null;
             try
             {
-                var subResponse = await client.GetSubscriptionAsync(topic, item.SubscriptionName);
+                var subResponse = await client.GetSubscriptionAsync(topic, item.SubscriptionName, cancellationToken);
                 subProps = subResponse?.Value;
             }
-            catch (Exception)
+            catch (Exception exception) when (exception is NotSupportedException or NotImplementedException ||
+                                              exception is RequestFailedException { Status: 501 })
             {
                 // Subscription properties may not be available on some emulator builds
             }
 
             var activeCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }));
+                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }), cancellationToken: cancellationToken);
             var deadLetterCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }));
+                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }), cancellationToken: cancellationToken);
             await Task.WhenAll(activeCountTask, deadLetterCountTask);
             var activeCount = activeCountTask.Result;
             var deadLetterCount = deadLetterCountTask.Result;
@@ -97,12 +102,13 @@ public static class SubscriptionEndpoints
     }
 
     private static async Task<IResult> CreateSubscription(string topic, CreateSubscriptionRequest request,
-        ServiceBusAdministrationClient client)
+        ServiceBusAdministrationClient client, CancellationToken cancellationToken)
     {
-
+        var errors = EntityValidation.Validate(request.Name, 50, request.MaxDeliveryCount, request.LockDuration, request.DefaultTtl);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
         try
         {
-            var currentSubscription = await client.GetSubscriptionAsync(topic, request.Name);
+            var currentSubscription = await client.GetSubscriptionAsync(topic, request.Name, cancellationToken);
 
             if (currentSubscription is not null)
             {
@@ -119,25 +125,17 @@ public static class SubscriptionEndpoints
 
         await client.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, request.Name)
         {
-            DefaultMessageTimeToLive = request.DefaultTtl switch
-            {
-                _ when TimeSpan.TryParse(request.DefaultTtl, out var parsedTtl) => parsedTtl,
-                _ => TimeSpan.FromDays(14)
-            },
-            LockDuration = request.LockDuration switch
-            {
-                _ when TimeSpan.TryParse(request.LockDuration, out var parsedLockDuration) => parsedLockDuration,
-                _ => TimeSpan.FromMinutes(1)
-            },
+            DefaultMessageTimeToLive = EntityValidation.DurationOrDefault(request.DefaultTtl, TimeSpan.FromDays(14)),
+            LockDuration = EntityValidation.DurationOrDefault(request.LockDuration, TimeSpan.FromMinutes(1)),
             MaxDeliveryCount = request.MaxDeliveryCount ?? 10
-        });
+        }, cancellationToken);
         return Results.Ok();
     }
 
     private static async Task<IResult> DeleteSubscription(string topic, string sub,
-        ServiceBusAdministrationClient client)
+        ServiceBusAdministrationClient client, CancellationToken cancellationToken)
     {
-        var currentSubscription = await client.GetSubscriptionAsync(topic, sub);
+        var currentSubscription = await client.GetSubscriptionAsync(topic, sub, cancellationToken);
 
         if (currentSubscription is  null)
         {
@@ -147,7 +145,7 @@ public static class SubscriptionEndpoints
                 title: "Not Found");
         }
 
-        await client.DeleteSubscriptionAsync(topic, sub);
+        await client.DeleteSubscriptionAsync(topic, sub, cancellationToken);
         return Results.Ok();
     }
 
@@ -157,9 +155,13 @@ public static class SubscriptionEndpoints
         CaseInsensitiveEnum<PeekMode> mode,
         CaseInsensitiveEnum<MessageState> state,
         ServiceBusEndpointCache endpointCache,
+        CancellationToken cancellationToken,
         int skip = 0,
         int take = 25)
     {
+        var errors = MessagePeeking.ValidatePagination(skip, take);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+
         var options = new ServiceBusReceiverOptions
         {
             SubQueue = state.Value switch
@@ -172,31 +174,7 @@ public static class SubscriptionEndpoints
 
         var receiver = endpointCache.GetTopicReceiver(topic, sub, options);
 
-        using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        IReadOnlyList<ServiceBusReceivedMessage>? messages = [];
-        try
-        {
-            await using var _ = await endpointCache.LockAsync(receiver, cancellationTokenSource.Token);
-
-            long fromSequenceNumber = 0;
-            if (skip > 0)
-            {
-                var skipped = await receiver.PeekMessagesAsync(
-                    maxMessages: skip, fromSequenceNumber: 0, cancellationToken: cancellationTokenSource.Token);
-                if (skipped.Count > 0)
-                {
-                    fromSequenceNumber = skipped[^1].SequenceNumber + 1;
-                }
-            }
-
-            messages = await receiver.PeekMessagesAsync(
-                maxMessages: take,
-                fromSequenceNumber: fromSequenceNumber, cancellationToken: cancellationTokenSource.Token);
-        }
-        catch (Exception)
-        {
-            // ignored
-        }
+        var messages = await MessagePeeking.PeekAsync(endpointCache, receiver, skip, take, cancellationToken);
 
         var messageInfos = messages.Select(message => new MessageInfo(
             message.MessageId,

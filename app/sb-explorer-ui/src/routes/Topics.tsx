@@ -6,19 +6,26 @@ import ConfirmActionDialog from '../components/dialogs/ConfirmActionDialog'
 import CreateTopicDialog from '../components/dialogs/CreateTopicDialog'
 import { useCreateTopic, useDeleteTopic, useTopics } from '../api/hooks'
 import type { TopicInfo } from '../api/types'
+import QueryError from '../components/QueryError'
+import { notifications } from '@mantine/notifications'
+import { apiErrorMessage } from '../utils/apiError'
 
 const Topics = () => {
   const navigate = useNavigate()
-  const { data: topics, isLoading, refetch } = useTopics()
+  const { data: topics, isLoading, refetch, error, isFetching } = useTopics()
   const createTopic = useCreateTopic()
   const deleteTopic = useDeleteTopic()
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<TopicInfo | null>(null)
 
   const handleCreate = async (payload: { name: string }) => {
-    await createTopic.mutateAsync(payload)
-    setCreateOpen(false)
-    refetch()
+    try {
+      await createTopic.mutateAsync(payload)
+      setCreateOpen(false)
+      refetch()
+    } catch (error) {
+      notifications.show({ title: 'Create topic failed', message: apiErrorMessage(error), color: 'red' })
+    }
   }
 
   const handleDelete = async () => {
@@ -30,6 +37,7 @@ const Topics = () => {
 
   return (
     <Stack gap="md">
+      <QueryError error={error} stale={!!topics} retrying={isFetching} onRetry={() => { void refetch() }} />
       <EntityTable
         title="Topics"
         items={topics}
@@ -39,7 +47,7 @@ const Topics = () => {
         onRowClick={(t) => navigate(`/topics/${t.name}`)}
         emptyState={
           <Group gap="xs">
-            <Text>No topics yet.</Text>
+             <Text>{error ? 'Topics could not be loaded.' : 'No topics yet.'}</Text>
             <Button variant="subtle" onClick={() => setCreateOpen(true)}>
               Create one
             </Button>

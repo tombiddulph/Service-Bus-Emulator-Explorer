@@ -1,12 +1,16 @@
 import { useMemo } from 'react'
 import type { ReactNode } from 'react'
-import { ActionIcon, Checkbox, Group, Paper, ScrollArea, Table, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Alert, Button, Checkbox, Group, Paper, ScrollArea, Table, Text, Tooltip } from '@mantine/core'
+import axios from 'axios'
 import { IconArrowLeft, IconArrowRight } from '@tabler/icons-react'
 import type { MessageInfo, MessageState, PagedResult } from '../api/types'
 
 interface MessageGridProps {
   messages?: PagedResult<MessageInfo>
   loading?: boolean
+  error?: Error | null
+  retrying?: boolean
+  onRetry?: () => void
   state: MessageState
   skip: number
   take: number
@@ -53,6 +57,9 @@ const columns: Column<MessageInfo>[] = [
 const MessageGrid = ({
   messages,
   loading,
+  error,
+  retrying,
+  onRetry,
   state,
   skip,
   take,
@@ -79,9 +86,18 @@ const MessageGrid = ({
 
   const start = items.length ? skip + 1 : 0
   const end = skip + items.length
+  const errorDetail = axios.isAxiosError<{ detail?: string }>(error)
+    ? error.response?.data?.detail ?? error.message
+    : error?.message
 
   return (
     <Paper radius={0} p={0} style={{ color: 'var(--mantine-color-text)' }}>
+      {error && (
+        <Alert color="red" title={messages ? 'Message refresh failed — showing stale data' : 'Unable to load messages'} mb="sm">
+          <Text size="sm">{errorDetail || 'Check the emulator connection and try again.'}</Text>
+          {onRetry && <Button size="xs" variant="light" color="red" mt="xs" loading={retrying} onClick={onRetry}>Retry</Button>}
+        </Alert>
+      )}
       <Group align="center" gap="xs" mb="sm" className="portal-command-bar">
         <Tooltip label="Previous">
           <ActionIcon
@@ -134,7 +150,7 @@ const MessageGrid = ({
           <Table.Tbody>
             {items.length === 0 && <Table.Tr><Table.Td colSpan={columns.length + 1}>
               <Text size="sm" c="dimmed" ta="center" py="xl" role="status">
-                {loading ? 'Loading messages…' : skip > 0 ? 'No messages on this page. Go back to the previous page.' : state === 'deadletter' ? 'No dead-letter messages.' : 'No active messages.'}
+                {error ? 'Messages could not be refreshed. Use Retry above.' : loading ? 'Loading messages…' : skip > 0 ? 'No messages on this page. Go back to the previous page.' : state === 'deadletter' ? 'No dead-letter messages.' : 'No active messages.'}
               </Text>
             </Table.Td></Table.Tr>}
             {items.map((item) => (

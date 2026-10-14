@@ -19,6 +19,8 @@ public class TestServiceBusClient : ServiceBusClient
     public List<TestServiceBusReceiver> CreatedReceivers { get; } = [];
     public bool BlockReceiveAndDeleteDispose { get; set; }
     public bool FailReceiverCreation { get; set; }
+    public Exception? PeekException { get; set; }
+    public int? PeekBatchSize { get; set; }
     public bool FailReceiveAndDeleteDispose { get; set; }
     public TaskCompletionSource ReceiverDisposeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource AllowReceiverDispose { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -198,6 +200,9 @@ public class TestServiceBusClient : ServiceBusClient
         public override Task<IReadOnlyList<ServiceBusReceivedMessage>> PeekMessagesAsync(int maxMessages, long? fromSequenceNumber = null,
             CancellationToken cancellationToken = new())
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (client.PeekException is { } exception) throw exception;
+            if (client.PeekBatchSize is { } batchSize) maxMessages = Math.Min(maxMessages, batchSize);
             // Peeking sees locked messages too, so this deliberately ignores _locked.
             if (isDeadLetterReceiver)
             {
@@ -226,7 +231,7 @@ public class TestServiceBusClient : ServiceBusClient
                 return Task.FromResult<IReadOnlyList<ServiceBusReceivedMessage>>([]);
 
             var messages = sender.Messages
-                .Skip((int)(fromSequenceNumber ?? 0))
+                .Skip(Math.Max(0, (int)(fromSequenceNumber ?? 0) - 1))
                 .Take(maxMessages)
                 .Select(m => ServiceBusModelFactory.ServiceBusReceivedMessage(
                     body: m.Body,

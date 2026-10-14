@@ -215,6 +215,16 @@ Environment variables for the frontend (via `.env` or build scripts):
 
 - `GET /api/environment` - Get the current host environment
 
+### Message Peek Behaviour
+
+Queue and subscription message peeks accept `skip` from 0 to 10000 and `take`
+from 1 to 250 (defaults: 0 and 25). Invalid pagination returns a 400 validation
+problem. Peeks have a 10-second deadline, including time spent waiting for the
+entity operation lock, and are cancelled when the HTTP request is aborted.
+Missing entities return 404, broker connection failures return 503, and timeouts
+return 504 rather than a successful empty page. The UI offers Retry and labels
+previously loaded messages as stale when a refresh fails.
+
 ## 🧪 Testing
 
 Run the test suite from the repository root:
