@@ -69,7 +69,7 @@ const MessageGrid = ({
   onInspect,
 }: MessageGridProps) => {
   const items = useMemo(() => messages?.items ?? [], [messages?.items])
-  const hasNext = messages?.hasMore || (messages?.total ? skip + take < messages.total : items.length === take)
+  const hasNext = messages?.hasMore ?? (messages?.total ? skip + take < messages.total : items.length === take)
   const canPrev = skip > 0
 
   const toggleSelection = (id: string) => {

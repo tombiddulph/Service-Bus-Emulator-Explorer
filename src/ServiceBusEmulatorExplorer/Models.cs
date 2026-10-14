@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace ServiceBusEmulatorExplorer;
 
-public record EnvironmentInfo(string Name, bool ReadOnly = false);
+public record EnvironmentInfo(string Name, bool ReadOnly = false, int RefreshIntervalMs = 8000);
 
 [JsonConverter(typeof(JsonStringEnumConverter<EntityStatus>))]
 public enum EntityStatus
@@ -94,7 +94,8 @@ public record MessageInfo(
 public record PagedMessages(
     IReadOnlyList<MessageInfo> Items,
     int? Total = null,
-    bool? HasMore = null
+    bool? HasMore = null,
+    string? NextSequenceNumber = null
 );
 
 public record SendMessageRequest(

@@ -48,6 +48,7 @@ const TopicDetailContent = () => {
 
   const [messageState, setMessageState] = useState<MessageState>('active')
   const [skip, setSkip] = useState(0)
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined])
   const take = 25
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [inspect, setInspect] = useState<string | undefined>()
@@ -68,6 +69,7 @@ const TopicDetailContent = () => {
     state: messageState,
     skip,
     take,
+    cursor: cursors[skip / take],
     enabled: !!name && !!subscription,
   })
 
@@ -213,6 +215,7 @@ const TopicDetailContent = () => {
               setMessageState(state)
               setSelectedIds([])
               setSkip(0)
+              setCursors([undefined])
             }}
             activeCount={sub?.activeMessageCount}
             deadLetterCount={sub?.deadLetterMessageCount}
@@ -301,6 +304,7 @@ const TopicDetailContent = () => {
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
             onPageChange={(next) => {
+              if (next > skip) setCursors([...cursors.slice(0, skip / take + 1), messages.data?.nextSequenceNumber ?? undefined])
               setSkip(Math.max(0, next))
               setSelectedIds([])
             }}

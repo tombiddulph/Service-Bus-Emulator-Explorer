@@ -123,7 +123,14 @@ app.UseHttpsRedirection();
 
 var api = app.MapGroup("/api");
 api.MapGet("/environment", (IHostEnvironment environment, Microsoft.Extensions.Options.IOptions<ExplorerOptions> options) =>
-    Results.Ok(new EnvironmentInfo(environment.EnvironmentName, options.Value.ReadOnly)));
+    Results.Ok(new EnvironmentInfo(environment.EnvironmentName, options.Value.ReadOnly, Math.Clamp(options.Value.RefreshIntervalMs, 1000, 60000))));
+api.AddEndpointFilter(async (context, next) =>
+{
+    var result = await next(context);
+    if (!HttpMethods.IsGet(context.HttpContext.Request.Method))
+        context.HttpContext.RequestServices.GetRequiredService<ServiceBusEndpointCache>().InvalidateCounts();
+    return result;
+});
 api
     .MapQueueEndpoints()
     .MapTopicEndpoints()

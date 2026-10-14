@@ -38,6 +38,14 @@ test('read-only mode disables mutations', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
 })
 
+test('auto-refresh can be paused and resumed', async ({ page }) => {
+  await page.goto('/queues')
+  await page.getByRole('button', { name: 'Pause auto-refresh' }).click()
+  await expect(page.getByRole('button', { name: 'Resume auto-refresh' })).toBeVisible()
+  await page.getByRole('button', { name: 'Resume auto-refresh' }).click()
+  await expect(page.getByRole('button', { name: 'Pause auto-refresh' })).toBeVisible()
+})
+
 test('deleting an entity requires its exact name', async ({ page }) => {
   await page.goto('/queues/orders')
   await page.getByRole('button', { name: 'Delete', exact: true }).click()

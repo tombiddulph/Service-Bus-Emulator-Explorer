@@ -21,6 +21,7 @@ public class TestServiceBusClient : ServiceBusClient
     public bool FailReceiverCreation { get; set; }
     public Exception? PeekException { get; set; }
     public int? PeekBatchSize { get; set; }
+    public int PeekCallCount;
     public bool FailReceiveAndDeleteDispose { get; set; }
     public TaskCompletionSource ReceiverDisposeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource AllowReceiverDispose { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -201,6 +202,7 @@ public class TestServiceBusClient : ServiceBusClient
             CancellationToken cancellationToken = new())
         {
             cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref client.PeekCallCount);
             if (client.PeekException is { } exception) throw exception;
             if (client.PeekBatchSize is { } batchSize) maxMessages = Math.Min(maxMessages, batchSize);
             // Peeking sees locked messages too, so this deliberately ignores _locked.

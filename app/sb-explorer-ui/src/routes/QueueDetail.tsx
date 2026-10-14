@@ -38,6 +38,7 @@ const QueueDetailContent = () => {
 
   const [messageState, setMessageState] = useState<MessageState>('active')
   const [skip, setSkip] = useState(0)
+  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined])
   const take = 25
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [inspect, setInspect] = useState<string | undefined>()
@@ -51,6 +52,7 @@ const QueueDetailContent = () => {
     state: messageState,
     skip,
     take,
+    cursor: cursors[skip / take],
     enabled: !!name,
   })
 
@@ -114,6 +116,7 @@ const QueueDetailContent = () => {
             setMessageState(state)
             setSelectedIds([])
             setSkip(0)
+            setCursors([undefined])
           }}
           activeCount={queue.activeMessageCount}
           deadLetterCount={queue.deadLetterMessageCount}
@@ -202,6 +205,7 @@ const QueueDetailContent = () => {
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           onPageChange={(next) => {
+            if (next > skip) setCursors([...cursors.slice(0, skip / take + 1), messages.data?.nextSequenceNumber ?? undefined])
             setSkip(Math.max(0, next))
             setSelectedIds([])
           }}

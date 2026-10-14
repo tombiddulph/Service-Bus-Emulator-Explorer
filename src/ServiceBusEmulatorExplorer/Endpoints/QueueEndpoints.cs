@@ -81,10 +81,10 @@ public static class QueueEndpoints
                 // Queue properties may not be available (e.g. emulator limitation)
             }
 
-            var activeCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }), cancellationToken: cancellationToken);
-            var deadLetterCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }), cancellationToken: cancellationToken);
+            var activeCountTask = endpointCache.GetCountAsync(
+                endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }), cancellationToken);
+            var deadLetterCountTask = endpointCache.GetCountAsync(
+                endpointCache.GetReceiver(item.Name, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }), cancellationToken);
             await Task.WhenAll(activeCountTask, deadLetterCountTask);
             var activeCount = activeCountTask.Result;
             var deadLetterCount = deadLetterCountTask.Result;
@@ -130,9 +130,10 @@ public static class QueueEndpoints
         };
     }
 
-    private static async Task<IResult> DeleteQueue(string name, ServiceBusAdministrationClient client, CancellationToken cancellationToken)
+    private static async Task<IResult> DeleteQueue(string name, ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache, CancellationToken cancellationToken)
     {
         var response = await client.DeleteQueueAsync(name, cancellationToken);
+        if (!response.IsError) await endpointCache.RemoveEntityAsync(name);
 
         return Results.StatusCode(response.Status);
     }
@@ -144,9 +145,11 @@ public static class QueueEndpoints
         ServiceBusEndpointCache endpointCache,
         CancellationToken cancellationToken,
         int skip = 0,
-        int take = 25)
+        int take = 25,
+        long? fromSequenceNumber = null)
     {
         var errors = MessagePeeking.ValidatePagination(skip, take);
+        if (fromSequenceNumber is < 0) errors["fromSequenceNumber"] = ["Sequence number must be non-negative."];
         if (errors.Count > 0) return Results.ValidationProblem(errors);
 
         var receiverOptions = new ServiceBusReceiverOptions
@@ -157,7 +160,8 @@ public static class QueueEndpoints
 
         var receiver = endpointCache.GetReceiver(name, receiverOptions);
 
-        var messages = await MessagePeeking.PeekAsync(endpointCache, receiver, skip, take, cancellationToken);
+        var peek = await MessagePeeking.PeekAsync(endpointCache, receiver, skip, take, cancellationToken, fromSequenceNumber);
+        var messages = peek.Messages;
 
         var messageInfos = messages.Select(message => new MessageInfo(
             message.MessageId,
@@ -171,7 +175,7 @@ public static class QueueEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
+        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, peek.HasMore, peek.NextSequenceNumber);
 
         return Results.Ok(pagedMessages);
     }

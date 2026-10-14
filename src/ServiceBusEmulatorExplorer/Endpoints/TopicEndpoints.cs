@@ -54,10 +54,10 @@ public static class TopicEndpoints
 
             var countResults = await Task.WhenAll(subscriptionNames.Select(async subscriptionName =>
             {
-                var active = await Helpers.CountMessagesAsync(
-                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.None }), cancellationToken: cancellationToken);
-                var deadLetter = await Helpers.CountMessagesAsync(
-                    endpointCache, endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.DeadLetter }), cancellationToken: cancellationToken);
+                var active = await endpointCache.GetCountAsync(
+                    endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.None }), cancellationToken);
+                var deadLetter = await endpointCache.GetCountAsync(
+                    endpointCache.GetTopicReceiver(item.Name, subscriptionName, new() { SubQueue = SubQueue.DeadLetter }), cancellationToken);
                 return (Active: active, DeadLetter: deadLetter);
             }));
 
@@ -100,7 +100,7 @@ public static class TopicEndpoints
         };
     }
 
-    private static async Task<IResult> DeleteTopic(string name, ServiceBusAdministrationClient client, CancellationToken cancellationToken)
+    private static async Task<IResult> DeleteTopic(string name, ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache, CancellationToken cancellationToken)
     {
         var exists = await client.GetTopicAsync(name, cancellationToken);
         if (exists.Value is null)
@@ -108,7 +108,9 @@ public static class TopicEndpoints
             return Results.Problem("Topic does not exist", statusCode: StatusCodes.Status400BadRequest, title: "Bad Request");
         }
 
-        return (await client.DeleteTopicAsync(name, cancellationToken)) switch
+        var response = await client.DeleteTopicAsync(name, cancellationToken);
+        if (!response.IsError) await endpointCache.RemoveEntityAsync(name);
+        return response switch
         {
             { IsError: false } => Results.Ok(),
             _ => Results.Problem("Failed to delete topic", statusCode: StatusCodes.Status500InternalServerError, title: "Internal Server Error")

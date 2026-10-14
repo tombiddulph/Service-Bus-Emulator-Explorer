@@ -56,6 +56,7 @@ export interface PagedResult<T> {
   items: T[]
   total?: number
   hasMore?: boolean
+  nextSequenceNumber?: string | null
 }
 
 export type MessageState = 'active' | 'deadletter'

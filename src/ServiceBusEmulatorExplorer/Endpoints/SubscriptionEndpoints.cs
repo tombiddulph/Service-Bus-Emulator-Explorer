@@ -74,10 +74,10 @@ public static class SubscriptionEndpoints
                 // Subscription properties may not be available on some emulator builds
             }
 
-            var activeCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }), cancellationToken: cancellationToken);
-            var deadLetterCountTask = Helpers.CountMessagesAsync(
-                endpointCache, endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }), cancellationToken: cancellationToken);
+            var activeCountTask = endpointCache.GetCountAsync(
+                endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.None }), cancellationToken);
+            var deadLetterCountTask = endpointCache.GetCountAsync(
+                endpointCache.GetTopicReceiver(topic, item.SubscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter }), cancellationToken);
             await Task.WhenAll(activeCountTask, deadLetterCountTask);
             var activeCount = activeCountTask.Result;
             var deadLetterCount = deadLetterCountTask.Result;
@@ -133,7 +133,7 @@ public static class SubscriptionEndpoints
     }
 
     private static async Task<IResult> DeleteSubscription(string topic, string sub,
-        ServiceBusAdministrationClient client, CancellationToken cancellationToken)
+        ServiceBusAdministrationClient client, ServiceBusEndpointCache endpointCache, CancellationToken cancellationToken)
     {
         var currentSubscription = await client.GetSubscriptionAsync(topic, sub, cancellationToken);
 
@@ -146,6 +146,7 @@ public static class SubscriptionEndpoints
         }
 
         await client.DeleteSubscriptionAsync(topic, sub, cancellationToken);
+        await endpointCache.RemoveEntityAsync($"{topic}/Subscriptions/{sub}");
         return Results.Ok();
     }
 
@@ -157,9 +158,11 @@ public static class SubscriptionEndpoints
         ServiceBusEndpointCache endpointCache,
         CancellationToken cancellationToken,
         int skip = 0,
-        int take = 25)
+        int take = 25,
+        long? fromSequenceNumber = null)
     {
         var errors = MessagePeeking.ValidatePagination(skip, take);
+        if (fromSequenceNumber is < 0) errors["fromSequenceNumber"] = ["Sequence number must be non-negative."];
         if (errors.Count > 0) return Results.ValidationProblem(errors);
 
         var options = new ServiceBusReceiverOptions
@@ -174,7 +177,8 @@ public static class SubscriptionEndpoints
 
         var receiver = endpointCache.GetTopicReceiver(topic, sub, options);
 
-        var messages = await MessagePeeking.PeekAsync(endpointCache, receiver, skip, take, cancellationToken);
+        var peek = await MessagePeeking.PeekAsync(endpointCache, receiver, skip, take, cancellationToken, fromSequenceNumber);
+        var messages = peek.Messages;
 
         var messageInfos = messages.Select(message => new MessageInfo(
             message.MessageId,
@@ -188,7 +192,7 @@ public static class SubscriptionEndpoints
             message.GetRawAmqpMessage().MessageAnnotations.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
             message.ApplicationProperties.ToDictionary(kvp => kvp.Key, kvp => kvp.Value))).ToList();
 
-        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, messageInfos.Count == take);
+        var pagedMessages = new PagedMessages(messageInfos, messageInfos.Count, peek.HasMore, peek.NextSequenceNumber);
 
         return Results.Ok(pagedMessages);
     }
