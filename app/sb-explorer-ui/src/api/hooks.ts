@@ -14,6 +14,12 @@ import type {
   SendScope,
   SubscriptionInfo,
   TopicInfo,
+  CreateQueueRequest,
+  CreateTopicRequest,
+  CreateSubscriptionRequest,
+  SendMessageRequest,
+  EnvironmentInfo,
+  ConnectionInfo,
 } from './types'
 
 const dlqOperationTimeoutMs = 45000
@@ -21,7 +27,7 @@ const dlqOperationTimeoutMs = 45000
 export const useEnvironment = () =>
   useQuery({
     queryKey: ['environment'],
-    queryFn: async ({ signal }) => (await apiClient.get<{ name: string; readOnly: boolean; refreshIntervalMs: number }>('/environment', { signal })).data,
+    queryFn: async ({ signal }) => (await apiClient.get<EnvironmentInfo>('/environment', { signal })).data,
     staleTime: Infinity,
     // The API can still be warming up on the very first page load, so keep retrying instead of failing permanently.
     retry: 10,
@@ -32,6 +38,13 @@ export const useEnvironment = () =>
   })
 
 export const useReadOnly = () => useEnvironment().data?.readOnly ?? true
+
+export const useConnection = () => useQuery({
+  queryKey: ['connection'],
+  queryFn: async ({ signal }) => (await apiClient.get<ConnectionInfo>('/connection', { signal })).data,
+  refetchInterval: usePollingInterval(),
+  retry: false,
+})
 
 function usePollingInterval(): number | false {
   const settings = useRefreshSettings()
@@ -97,7 +110,7 @@ export const useMessages = ({ scope, state, skip, take, cursor, enabled = true }
 export const useCreateQueue = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: Partial<QueueInfo> & { name: string }) => {
+    mutationFn: async (payload: CreateQueueRequest) => {
       await apiClient.post('/queues', payload)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['queues'] }),
@@ -107,7 +120,7 @@ export const useCreateQueue = () => {
 export const useCreateTopic = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: Partial<TopicInfo> & { name: string }) => {
+    mutationFn: async (payload: CreateTopicRequest) => {
       await apiClient.post('/topics', payload)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['topics'] }),
@@ -117,7 +130,7 @@ export const useCreateTopic = () => {
 export const useCreateSubscription = (topic: string) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: Partial<SubscriptionInfo> & { name: string }) => {
+    mutationFn: async (payload: CreateSubscriptionRequest) => {
       await apiClient.post(`/topics/${topic}/subscriptions`, payload)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', topic] }),
@@ -154,12 +167,8 @@ export const useDeleteSubscription = (topic: string) => {
   })
 }
 
-interface SendMessageInput {
+interface SendMessageInput extends SendMessageRequest {
   scope: SendScope
-  body: string
-  contentType?: string
-  userProperties?: Record<string, unknown>
-  sessionId?: string
 }
 
 export const useSendMessage = () => {

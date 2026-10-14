@@ -4,6 +4,10 @@ using System.Text.Json.Serialization;
 namespace ServiceBusEmulatorExplorer;
 
 public record EnvironmentInfo(string Name, bool ReadOnly = false, int RefreshIntervalMs = 8000);
+public record ConnectionInfo(bool AdministrationAvailable, bool AmqpTransportAvailable, DateTimeOffset CheckedAt)
+{
+    public bool Ready => AdministrationAvailable && AmqpTransportAvailable;
+}
 
 [JsonConverter(typeof(JsonStringEnumConverter<EntityStatus>))]
 public enum EntityStatus

@@ -13,6 +13,7 @@ namespace ServiceBusEmulatorExplorer;
 [JsonSerializable(typeof(List<SubscriptionInfo>))]
 [JsonSerializable(typeof(IReadOnlyList<SubscriptionInfo>))]
 [JsonSerializable(typeof(EnvironmentInfo))]
+[JsonSerializable(typeof(ConnectionInfo))]
 [JsonSerializable(typeof(MessageInfo))]
 [JsonSerializable(typeof(PagedMessages))]
 [JsonSerializable(typeof(SendMessageRequest))]

@@ -20,6 +20,7 @@ public static class Helpers
         cts.CancelAfter(timeout ?? TimeSpan.FromSeconds(10));
 
         long count = 0;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         long fromSequenceNumber = 0;
         var isExact = true;
         try
@@ -56,6 +57,8 @@ public static class Helpers
             isExact = false;
         }
 
+        ExplorerMetrics.CountDuration.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+            new KeyValuePair<string, object?>("exact", isExact));
         return new MessageCountResult(count, isExact);
     }
 

@@ -5,6 +5,7 @@ test.beforeEach(async ({ page }) => {
     const path = new URL(route.request().url()).pathname
     let data: unknown = []
     if (path.endsWith('/environment')) data = { name: 'Test', readOnly: false, refreshIntervalMs: 8000 }
+    else if (path.endsWith('/connection')) data = { administrationAvailable: true, amqpTransportAvailable: true, ready: true, checkedAt: new Date().toISOString() }
     else if (path.endsWith('/queues')) data = [{ name: 'orders', status: 'Active', activeMessageCount: 1, deadLetterMessageCount: 1 }]
     else if (path.endsWith('/topics')) data = [{ name: 'events', status: 'Active', activeMessageCount: 1, deadLetterMessageCount: 0 }]
     else if (path.endsWith('/subscriptions')) data = [{ name: 'consumer', status: 'Active', activeMessageCount: 1, deadLetterMessageCount: 0 }]

@@ -18,7 +18,7 @@ describe('bulk result summaries', () => {
     expect(summary.color).toBe('yellow')
   })
   it('excludes missing and deleted messages from deletion retries', () => {
-    expect(summarizeDeleteResult({ count: 1, status: 'partial', isPartial: true, notFound: ['gone'], outcomes: [
+    expect(summarizeDeleteResult({ count: 1, status: 'Partial', isPartial: true, notFound: ['gone'], outcomes: [
       { messageId: 'ok', deleted: true }, { messageId: 'retry', deleted: false }, { messageId: 'gone', deleted: false },
     ] }).retryIds).toEqual(['retry'])
   })

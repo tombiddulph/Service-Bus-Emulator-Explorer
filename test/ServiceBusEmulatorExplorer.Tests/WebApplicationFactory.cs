@@ -15,8 +15,15 @@ public class WebApplicationFactory : TestWebApplicationFactory<Program>
         {
             services.AddSingleton<ServiceBusAdministrationClient,TestServiceBusAdministrationClient>();
             services.AddSingleton<ServiceBusClient,TestServiceBusClient>();
+            services.AddSingleton<IAmqpTransportProbe, TestAmqpProbe>();
         });
     }
 }
 
 public abstract class TestBase : WebApplicationTest<WebApplicationFactory, Program>;
+
+public class TestAmqpProbe : IAmqpTransportProbe
+{
+    public bool Available { get; set; } = true;
+    public Task<bool> CheckAsync(CancellationToken cancellationToken) => Task.FromResult(Available);
+}

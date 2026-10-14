@@ -140,7 +140,9 @@ public sealed class ServiceBusEndpointCache(ServiceBusClient client) : IAsyncDis
     private async Task<IAsyncDisposable> LockAsync(string operationKey, CancellationToken cancellationToken)
     {
         var semaphore = _operationLocks.GetOrAdd(operationKey, _ => new SemaphoreSlim(1, 1));
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         await semaphore.WaitAsync(cancellationToken);
+        ExplorerMetrics.LockWait.Record(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return new Releaser(semaphore);
     }
 

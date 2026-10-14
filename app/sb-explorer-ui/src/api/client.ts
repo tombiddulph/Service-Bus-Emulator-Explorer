@@ -52,7 +52,6 @@ console.log("[SB-Explorer] Configuration:", {
   apiBaseUrl,
   isMockEnabled,
   mockMatrix,
-  env: import.meta.env,
 });
 
 export const messagePath = (scope: MessageScope | SendScope) => {
@@ -92,7 +91,7 @@ const mockData = (() => {
   const queues: QueueInfo[] = [
     {
       name: "orders",
-      status: "Active",
+      status: "active",
       activeMessageCount: 2,
       deadLetterMessageCount: 1,
       maxDeliveryCount: 10,
@@ -102,7 +101,7 @@ const mockData = (() => {
     },
     {
       name: "payments",
-      status: "Active",
+      status: "active",
       activeMessageCount: 0,
       deadLetterMessageCount: 0,
       maxDeliveryCount: 5,
@@ -115,7 +114,7 @@ const mockData = (() => {
   const topics: TopicInfo[] = [
     {
       name: "invoices",
-      status: "Active",
+      status: "active",
       activeMessageCount: 3,
       deadLetterMessageCount: 0,
       createdAt: new Date().toISOString(),
@@ -126,7 +125,7 @@ const mockData = (() => {
     invoices: [
       {
         name: "processor",
-        status: "Active",
+        status: "active",
         activeMessageCount: 2,
         deadLetterMessageCount: 0,
         maxDeliveryCount: 10,
@@ -135,7 +134,7 @@ const mockData = (() => {
       },
       {
         name: "archiver",
-        status: "Active",
+        status: "active",
         activeMessageCount: 1,
         deadLetterMessageCount: 0,
         maxDeliveryCount: 5,
@@ -228,7 +227,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
       if (!exists) {
         mockData.queues.push({
           name: payload.name,
-          status: "Active",
+          status: "active",
           activeMessageCount: 0,
           deadLetterMessageCount: 0,
           maxDeliveryCount: payload.maxDeliveryCount ?? 10,
@@ -258,7 +257,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
       if (!exists) {
         mockData.topics.push({
           name: payload.name,
-          status: "Active",
+          status: "active",
           activeMessageCount: 0,
           deadLetterMessageCount: 0,
           createdAt: new Date().toISOString(),
@@ -300,7 +299,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
         if (!exists) {
           list.push({
             name: payload.name,
-            status: "Active",
+            status: "active",
             activeMessageCount: 0,
             deadLetterMessageCount: 0,
             maxDeliveryCount: payload.maxDeliveryCount ?? 10,
@@ -403,7 +402,7 @@ const mockAdapter: AxiosAdapter = async (config) => {
     const messageIds: string[] = payload?.messageIds ?? [];
     return respond<DeleteDlqResult>({
       count: messageIds.length,
-      status: "completed",
+      status: "Completed",
       isPartial: false,
       outcomes: messageIds.map((messageId) => ({ messageId, deleted: true })),
       notFound: [],

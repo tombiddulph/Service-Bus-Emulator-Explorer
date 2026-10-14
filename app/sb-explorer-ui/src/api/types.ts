@@ -1,112 +1,23 @@
-export type EntityStatus = 'Active' | 'Disabled' | 'SendDisabled' | 'ReceiveDisabled'
+import type { components } from './generated'
 
-export interface QueueInfo {
-  name: string
-  status: EntityStatus
-  activeMessageCount: number
-  deadLetterMessageCount: number
-  activeMessageCountIsExact?: boolean
-  deadLetterMessageCountIsExact?: boolean
-  scheduledMessageCount?: number
-  createdAt?: string
-  maxDeliveryCount?: number
-  lockDuration?: string
-  defaultTtl?: string
-}
+type Schemas = components['schemas']
+export type EntityStatus = Schemas['EntityStatus']
+export type QueueInfo = Schemas['QueueInfo']
+export type TopicInfo = Schemas['TopicInfo']
+export type SubscriptionInfo = Schemas['SubscriptionInfo']
+export type MessageInfo = Schemas['MessageInfo']
+export type MessageState = Schemas['MessageState']
+export type DeleteDlqResult = Schemas['DeleteDlqResult']
+export type ReplayDlqResult = Schemas['ReplayDlqResult']
+export type PurgeResult = Schemas['PurgeResult']
+export type CreateQueueRequest = Schemas['CreateQueueRequest']
+export type CreateTopicRequest = Schemas['CreateTopicRequest']
+export type CreateSubscriptionRequest = Schemas['CreateSubscriptionRequest']
+export type SendMessageRequest = Schemas['SendMessageRequest']
+export type EnvironmentInfo = Schemas['EnvironmentInfo']
+export type ConnectionInfo = Schemas['ConnectionInfo']
+export type PagedResult<T> = Omit<Schemas['PagedMessages'], 'items'> & { items: T[] }
 
-export interface TopicInfo {
-  name: string
-  status: EntityStatus
-  activeMessageCount: number
-  deadLetterMessageCount: number
-  activeMessageCountIsExact?: boolean
-  deadLetterMessageCountIsExact?: boolean
-  scheduledMessageCount?: number
-  createdAt?: string
-}
-
-export interface SubscriptionInfo {
-  name: string
-  status: EntityStatus
-  activeMessageCount: number
-  deadLetterMessageCount: number
-  activeMessageCountIsExact?: boolean
-  deadLetterMessageCountIsExact?: boolean
-  scheduledMessageCount?: number
-  maxDeliveryCount?: number
-  lockDuration?: string
-  defaultTtl?: string
-  createdAt?: string
-}
-
-export interface MessageInfo {
-  messageId: string
-  bodyPreview: string
-  body?: string
-  enqueuedTime?: string
-  expiresAt?: string
-  deliveryCount?: number
-  contentType?: string
-  sessionId?: string
-  userProperties?: Record<string, unknown>
-  systemProperties?: Record<string, unknown>
-}
-
-export interface PagedResult<T> {
-  items: T[]
-  total?: number
-  hasMore?: boolean
-  nextSequenceNumber?: string | null
-}
-
-export type MessageState = 'active' | 'deadletter'
-
-export type MessageScope =
-  | { type: 'queue'; name: string }
-  | { type: 'subscription'; topic: string; subscription: string }
-
-// Messages can only be sent to a queue or a topic (the broker fans a topic send out to its
-// subscriptions), never directly to a subscription.
+// UI navigation scopes are not wire contracts.
+export type MessageScope = { type: 'queue'; name: string } | { type: 'subscription'; topic: string; subscription: string }
 export type SendScope = { type: 'queue'; name: string } | { type: 'topic'; name: string }
-
-export interface CountResult {
-  count: number
-  notFound?: string[]
-}
-
-export interface DeleteMessageOutcome {
-  messageId: string
-  deleted: boolean
-  error?: string
-}
-
-export interface DeleteDlqResult {
-  count: number
-  status: 'completed' | 'partial' | 'timedOut' | 'failed'
-  isPartial: boolean
-  outcomes: DeleteMessageOutcome[]
-  notFound?: string[]
-  error?: string
-}
-
-export interface ReplayMessageOutcome {
-  messageId: string
-  sent: boolean
-  removedFromDlq: boolean
-  error?: string
-  sendOutcomeUnknown?: boolean
-}
-
-export interface ReplayDlqResult {
-  count: number
-  isPartial: boolean
-  outcomes: ReplayMessageOutcome[]
-  notFound?: string[]
-  error?: string
-}
-
-export interface PurgeResult {
-  status: 'Completed' | 'TimedOut' | 'Unauthorized' | 'Failed' | 'SessionRequired'
-  removedCount: number
-  message?: string
-}

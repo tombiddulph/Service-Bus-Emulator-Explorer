@@ -13,8 +13,8 @@ export interface EntityRow {
   deadLetterMessageCount: number
   activeMessageCountIsExact?: boolean
   deadLetterMessageCountIsExact?: boolean
-  scheduledMessageCount?: number
-  createdAt?: string
+  scheduledMessageCount?: number | null
+  createdAt?: string | null
 }
 
 interface EntityTableProps<T extends EntityRow> {

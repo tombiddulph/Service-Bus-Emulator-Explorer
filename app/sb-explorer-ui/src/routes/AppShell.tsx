@@ -6,7 +6,7 @@ import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMenu2, 
 import NavTree from '../components/NavTree'
 import MockBanner from '../components/MockBanner'
 import { useAppContext } from '../AppContext'
-import { useEnvironment } from '../api/hooks'
+import { useConnection, useEnvironment } from '../api/hooks'
 import { setRefreshSettings, useRefreshSettings } from '../api/refreshSettings'
 
 function AppShell() {
@@ -14,6 +14,7 @@ function AppShell() {
   const queryClient = useQueryClient()
   const { data: environment } = useEnvironment()
   const refresh = useRefreshSettings()
+  const connection = useConnection()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { pathname } = useLocation()
@@ -44,6 +45,9 @@ function AppShell() {
             ].filter((option, index, all) => all.findIndex(other => other.value === option.value) === index)} onChange={value => setRefreshSettings({ intervalMs: value ? Number(value) : null })} />
             <Badge variant="outline" color="gray.0" radius={2} visibleFrom="sm">{environment?.name ?? 'Connecting…'}</Badge>
             {environment?.readOnly && <Badge color="yellow">Read-only</Badge>}
+            <Tooltip label={`Administration: ${connection.data?.administrationAvailable ? 'available' : 'unavailable'}; AMQP transport: ${connection.data?.amqpTransportAvailable ? 'reachable' : 'unreachable'}. Last successful check: ${connection.dataUpdatedAt ? new Date(connection.dataUpdatedAt).toLocaleTimeString() : 'never'}`}>
+              <Badge color={connection.error || !connection.data?.ready ? 'red' : 'green'}>{connection.isPending ? 'Checking connection…' : connection.error ? 'API unavailable' : connection.data?.ready ? 'Connected' : 'Dependency unavailable'}</Badge>
+            </Tooltip>
             <Tooltip label="Refresh all resources">
               <ActionIcon variant="transparent" color="white" aria-label="Refresh all resources" onClick={() => queryClient.invalidateQueries()}><IconRefresh size={18} /></ActionIcon>
             </Tooltip>

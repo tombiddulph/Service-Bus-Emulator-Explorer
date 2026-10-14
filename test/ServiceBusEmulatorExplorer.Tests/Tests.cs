@@ -38,7 +38,13 @@ public class Tests : TestBase
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("application/json");
-        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("/api/queues");
+        var document = await response.Content.ReadAsStringAsync();
+        await Assert.That(document).Contains("/api/queues");
+        if (Environment.GetEnvironmentVariable("OPENAPI_OUTPUT") is { Length: > 0 } output)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+            await File.WriteAllTextAsync(output, document);
+        }
     }
 
     [Test]
