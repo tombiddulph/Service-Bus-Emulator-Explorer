@@ -4,7 +4,7 @@ This guide runs the published ASP.NET Core application with the bundled frontend
 
 ## Prerequisites
 
-- .NET 10 SDK, because the backend targets `net10.0`
+- .NET 11 SDK, because the backend targets `net11.0`
 - Node.js and npm, because publishing installs and builds the frontend
 - Docker and Docker Compose, to run the Service Bus Emulator and its dependencies
 - A `.env` file in the project root

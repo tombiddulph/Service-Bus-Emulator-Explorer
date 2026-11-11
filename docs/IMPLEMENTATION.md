@@ -15,7 +15,7 @@ and built-in authentication remain outside this implementation.
 5. **Diagnostics and contracts** — liveness/readiness endpoints, component status
    in the UI, low-cardinality metrics, OpenAPI-generated TypeScript aliases,
    explicit request types and contract-drift CI checks.
-6. **Developer experience** — working standalone mocks, .NET 10 SDK selection,
+6. **Developer experience** — working standalone mocks, .NET 11 SDK selection,
    lockfile-based publish, corrected instructions, MIT license, digest-pinned
    emulator/SQL images, Renovate configuration and a local verification script.
 

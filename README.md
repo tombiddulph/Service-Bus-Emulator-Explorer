@@ -45,7 +45,7 @@ A web-based UI for managing and exploring Azure Service Bus Emulator instances. 
 ## 📋 Prerequisites
 
 - Docker and Docker Compose
-- .NET 10.0 SDK (for local development)
+- .NET 11.0 SDK (for local development)
 - Node.js 24 and npm (for frontend development)
 
 ## 🛠️ Setup
@@ -258,7 +258,7 @@ Run the test suite from the repository root:
 dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release
 ```
 
-Run all local CI checks with Node.js 24 and .NET 10:
+Run all local CI checks with Node.js 24 and .NET 11:
 
 ```bash
 node scripts/verify.mjs

@@ -1,10 +1,10 @@
 ﻿# Build a custom local image:
 # docker build . --no-cache -t sb-explorer:local -f src/ServiceBusEmulatorExplorer/Dockerfile
-FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled AS base
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS base
 WORKDIR /app
 EXPOSE 8080
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0-resolute AS build
 
 # Install Node.js 24 via NodeSource + AOT dependencies
 RUN apt-get update && \
