@@ -2,7 +2,7 @@
 
 ## Toolchain and verification
 
-- Use .NET 10 and Node.js 24. The backend targets `net10.0`; CI uses Node 24.
+- Use .NET 11 and Node.js 24. The backend targets `net11.0`; CI uses Node 24.
 - Reproduce CI in this order: `npm ci` then `npm run build` in `app/sb-explorer-ui`, followed by `dotnet restore -r linux-musl-x64`, `dotnet build --no-restore --configuration Release`, and `dotnet run --project test/ServiceBusEmulatorExplorer.Tests/ServiceBusEmulatorExplorer.Tests.csproj --configuration Release`.
 - Frontend lint is separate from its build: run `npm run lint` in `app/sb-explorer-ui` when changing frontend code.
 - `node scripts/verify.mjs` runs the local CI checks, including Vitest, Playwright and generated-contract drift checks. Real-emulator integration uses the separate `test/ServiceBusEmulatorExplorer.Integration` runner and disposable `test/compose.integration.yaml` stack.
