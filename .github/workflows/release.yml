@@ -17,6 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup .NET for versioning
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '11.0.x'
+
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v4.7.0
         with:
